@@ -171,6 +171,14 @@ def _process_frame(
         gm = _read_exr_mask(matte_path, H, W)
         result = _apply_garbage_matte(result, gm, dilation_px=gm_dilation)
 
+    # Unpack result into constituent outputs
+    alpha_out = result[:, :, 3:4]
+    key_out   = result
+    eps       = 1e-6
+    fg_out    = np.concatenate(
+        [result[:, :, :3] / (alpha_out + eps), alpha_out], axis=-1
+    )
+
     # Build output paths: base_suffix.frame.exr  e.g. DC_0190_raw_L02_alpha.1053.exr
     import re as _re
     _m = _re.match(r'^(.*?)[._](\d+)$', frame_path.stem)

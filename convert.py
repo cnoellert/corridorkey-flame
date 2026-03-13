@@ -52,16 +52,32 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
 
 def _remap_key(key: str) -> str:
     """
-    Strip torch.compile prefix and timm FeatureGetterNet wrapper prefix.
-      _orig_mod.encoder.model.blocks.0.norm1.weight
-      → encoder.blocks.0.norm1.weight
+    Strip torch.compile prefix, timm FeatureGetterNet wrapper, and fix
+    nn.Sequential index naming (PyTorch .N. -> MLX .layers.N.).
+      _orig_mod.encoder.model.blocks.0.norm1.weight -> encoder.blocks.0.norm1.weight
+      _orig_mod.refiner.stem.0.weight -> refiner.stem.layers.0.weight
     """
+    import re
     # 1. Strip torch.compile artifact
     if key.startswith("_orig_mod."):
         key = key[len("_orig_mod."):]
-    # 2. Strip timm FeatureGetterNet: encoder.model.* → encoder.*
+    # 2. Strip timm FeatureGetterNet: encoder.model.* -> encoder.*
     if key.startswith("encoder.model."):
         key = "encoder." + key[len("encoder.model."):]
+    # 3. nn.Sequential: only remap known Sequential containers.
+    #    MLX stores Sequential children under .layers.N, not .N.
+    #    Only refiner.stem uses nn.Sequential in this model.
+    #    We cannot use a blanket regex or it corrupts block indices.
+    SEQ_PREFIXES = ("refiner.stem",)
+    for pfx in SEQ_PREFIXES:
+        needle = pfx + "."
+        if needle in key:
+            idx = key.index(needle) + len(needle)
+            rest = key[idx:]
+            # rest starts with a digit when it's a Sequential child index
+            import re as _re
+            rest = _re.sub(r'^(\d+)\.', lambda m: 'layers.' + m.group(1) + '.', rest)
+            key = key[:idx] + rest
     return key
 
 

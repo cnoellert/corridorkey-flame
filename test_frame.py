@@ -21,7 +21,7 @@ python test_frame.py /path/to/frame.exr --garbage-matte /path/to/matte.exr
 python test_frame.py /path/to/frame.exr --garbage-matte /path/to/matte.exr --preview
 """
 from __future__ import annotations
-import argparse, time
+import argparse, re, time
 from pathlib import Path
 import numpy as np
 import mlx.core as mx
@@ -100,13 +100,34 @@ def _read_exr_mask(path: Path, H: int, W: int) -> np.ndarray:
     return arr[:, :, None]
 
 
-def _write_exr(path: Path, data: np.ndarray) -> None:
-    """data: float32 [H, W, C] where C is 1, 3, or 4."""
+def _read_exr_compression(path: Path) -> dict:
+    """Read compression type and dwaCompressionLevel from an EXR header."""
+    import OpenEXR
+    f = OpenEXR.InputFile(str(path))
+    h = f.header()
+    return {
+        'compression':        h.get('compression'),       # Imath.Compression value
+        'dwaCompressionLevel': h.get('dwaCompressionLevel'),  # float or None
+    }
+
+
+def _write_exr(path: Path, data: np.ndarray,
+               compression: dict | None = None) -> None:
+    """
+    Write float32 EXR.  data: [H, W, C] where C is 1, 3, or 4.
+    compression: dict from _read_exr_compression(), or None for ZIP default.
+    """
     import OpenEXR, Imath
     H, W, C = data.shape
     names   = {1: ['Y'], 3: ['R','G','B'], 4: ['R','G','B','A']}[C]
     header  = OpenEXR.Header(W, H)
-    header['channels'] = {n: Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT)) for n in names}
+    if compression and compression.get('compression') is not None:
+        header['compression'] = compression['compression']
+        lvl = compression.get('dwaCompressionLevel')
+        if lvl is not None:
+            header['dwaCompressionLevel'] = float(lvl)
+    header['channels'] = {n: Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT))
+                          for n in names}
     f = OpenEXR.OutputFile(str(path), header)
     f.writePixels({n: data[:, :, i].tobytes() for i, n in enumerate(names)})
     f.close()
@@ -260,7 +281,14 @@ def main():
     frame_path = args.frame.expanduser().resolve()
     out_dir    = (args.out_dir or frame_path.parent).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = frame_path.stem
+    # Split stem into base name + frame number for correct sequence naming:
+    # DC_0190_raw_L02.1053  →  base='DC_0190_raw_L02'  frame_token='1053'
+    _m = re.match(r'^(.*?)[._](\d+)$', frame_path.stem)
+    if _m:
+        _base, _frame_token = _m.group(1), _m.group(2)
+    else:
+        _base, _frame_token = frame_path.stem, ''
+    stem = _base  # used for output naming below
 
     # Auto-convert weights
     model_path = args.model.expanduser().resolve()
@@ -284,6 +312,9 @@ def main():
     # Read frame
     print(f"[test] Reading {frame_path.name} …")
     rgb_linear = _read_exr_rgb(frame_path)
+    compression = _read_exr_compression(frame_path)
+    print(f"[test] Compression: {compression['compression']}  "
+          f"dwaLevel={compression.get('dwaCompressionLevel')}")
     H, W = rgb_linear.shape[:2]
     print(f"[test] Frame: {W}×{H}  (will process at {MODEL_SIZE}px, upsample back)")
 
@@ -331,12 +362,18 @@ def main():
     fg_out       = np.concatenate([rgb_straight, alpha_out], axis=-1)
 
     print(f"[test] Writing to {out_dir} …")
-    _write_exr(out_dir / f"{stem}_alpha.exr",  alpha_out)
-    _write_exr(out_dir / f"{stem}_fg.exr",     fg_out)
-    _write_exr(out_dir / f"{stem}_key.exr",    key_out)
-    print(f"  {stem}_alpha.exr  (single channel)")
-    print(f"  {stem}_fg.exr     (straight RGBA — unpremultiplied RGB + alpha)")
-    print(f"  {stem}_key.exr    (premult RGBA — comp-ready)")
+    def _outpath(suffix):
+        # Produces:  base_suffix.frame.exr  e.g. DC_0190_raw_L02_alpha.1053.exr
+        if _frame_token:
+            return out_dir / f"{stem}_{suffix}.{_frame_token}.exr"
+        return out_dir / f"{stem}_{suffix}.exr"
+
+    _write_exr(_outpath('alpha'), alpha_out, compression=compression)
+    _write_exr(_outpath('fg'),    fg_out,    compression=compression)
+    _write_exr(_outpath('key'),   key_out,   compression=compression)
+    print(f"  {_outpath('alpha').name}  (single channel)")
+    print(f"  {_outpath('fg').name}     (straight RGBA)")
+    print(f"  {_outpath('key').name}    (premult RGBA — comp-ready)")
 
     if args.preview:
         _write_preview(out_dir / f"{stem}_preview.png", result)

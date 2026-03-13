@@ -144,14 +144,15 @@ def _process_frame(
     """
     from test_frame import (
         _read_exr_rgb, _read_exr_mask, _write_exr,
-        infer_frame, _apply_garbage_matte,
+        _read_exr_compression, infer_frame, _apply_garbage_matte,
     )
 
     t_start = time.time()
 
     # Read inputs
-    rgb_linear = _read_exr_rgb(frame_path)
-    H, W = rgb_linear.shape[:2]
+    rgb_linear   = _read_exr_rgb(frame_path)
+    H, W         = rgb_linear.shape[:2]
+    compression  = _read_exr_compression(frame_path)
 
     mask = None
     if matte_path and matte_path.exists():
@@ -170,18 +171,22 @@ def _process_frame(
         gm = _read_exr_mask(matte_path, H, W)
         result = _apply_garbage_matte(result, gm, dilation_px=gm_dilation)
 
-    # Build output paths using same stem as input
-    stem      = frame_path.stem
-    alpha_out = result[:, :, 3:4]
-    key_out   = result
-    eps       = 1e-6
-    fg_out    = np.concatenate(
-        [result[:, :, :3] / (alpha_out + eps), alpha_out], axis=-1
-    )
+    # Build output paths: base_suffix.frame.exr  e.g. DC_0190_raw_L02_alpha.1053.exr
+    import re as _re
+    _m = _re.match(r'^(.*?)[._](\d+)$', frame_path.stem)
+    if _m:
+        _base, _frame_token = _m.group(1), _m.group(2)
+    else:
+        _base, _frame_token = frame_path.stem, ''
 
-    _write_exr(out_dir / f"{stem}_alpha.exr", alpha_out)
-    _write_exr(out_dir / f"{stem}_fg.exr",    fg_out)
-    _write_exr(out_dir / f"{stem}_key.exr",   key_out)
+    def _outpath(suffix):
+        if _frame_token:
+            return out_dir / f"{_base}_{suffix}.{_frame_token}.exr"
+        return out_dir / f"{_base}_{suffix}.exr"
+
+    _write_exr(_outpath('alpha'), alpha_out, compression=compression)
+    _write_exr(_outpath('fg'),    fg_out,    compression=compression)
+    _write_exr(_outpath('key'),   key_out,   compression=compression)
 
     elapsed = time.time() - t_start
     return {
@@ -271,7 +276,9 @@ def main():
     for idx, frame_path in enumerate(frames, 1):
         frame_num  = _fnum(frame_path)
         stem       = frame_path.stem
-        key_output = out_dir / f"{stem}_key.exr"
+        _m2 = re.match(r'''(.*?)[._](\d+)$''', frame_path.stem)
+        _b2, _ft2 = (_m2.group(1), _m2.group(2)) if _m2 else (frame_path.stem, '')
+        key_output = (out_dir / f"{_b2}_key.{_ft2}.exr") if _ft2 else (out_dir / f"{_b2}_key.exr")
 
         # Skip existing
         if args.skip_existing and key_output.exists():

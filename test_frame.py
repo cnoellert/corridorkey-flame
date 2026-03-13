@@ -35,10 +35,15 @@ MODEL_SIZE = 2048  # model's native inference resolution
 # Color helpers
 # ---------------------------------------------------------------------------
 
-def _linear_to_srgb(x: np.ndarray) -> np.ndarray:
-    """Linear → sRGB.  Clips to [0,1] first — HDR highlights become white,
-    which is correct for feeding a keyer network (screens are always < 1.0)."""
-    x = np.clip(x, 0.0, 1.0)
+def _linear_to_srgb(x: np.ndarray, clip_input: bool = False) -> np.ndarray:
+    """Linear → sRGB.
+    clip_input=True  : clip to [0,1] before encode (use for model input prep).
+    clip_input=False : preserve values > 1 via power curve (use for despill round-trip).
+    """
+    if clip_input:
+        x = np.clip(x, 0.0, 1.0)
+    else:
+        x = np.clip(x, 0.0, None)   # only kill negatives
     return np.where(x <= 0.0031308, x * 12.92, 1.055 * np.power(x, 1.0 / 2.4) - 0.055)
 
 def _srgb_to_linear(x: np.ndarray) -> np.ndarray:
@@ -108,10 +113,14 @@ def _write_exr(path: Path, data: np.ndarray) -> None:
 
 
 def _write_preview(path: Path, rgba_premul_linear: np.ndarray) -> None:
-    """Comp premult RGBA over black, sRGB encode, save PNG."""
+    """Comp premult RGBA over black, sRGB encode, save PNG.
+    Input is premult linear — for display we just clip and sRGB-encode
+    (compositing over black = premult values are already the comp).
+    """
     from PIL import Image
-    rgb  = np.clip(rgba_premul_linear[:, :, :3], 0, 1)
-    rgb8 = (_linear_to_srgb(rgb) * 255).clip(0, 255).astype(np.uint8)
+    rgb  = rgba_premul_linear[:, :, :3]
+    rgb  = np.clip(rgb, 0.0, None)           # kill negatives from Lanczos
+    rgb8 = (_linear_to_srgb(rgb, clip_input=True) * 255).clip(0, 255).astype(np.uint8)
     Image.fromarray(rgb8).save(str(path))
     print(f"  Preview: {path.name}")
 
@@ -130,9 +139,14 @@ def infer_frame(
     """
     Full reference pipeline. Returns premult RGBA [H, W, 4] linear float32.
 
-    Steps mirror CorridorKeyEngine.process_frame(input_is_linear=True):
+    FG color = original linear plate (not model reconstruction).
+    Alpha     = model prediction, despeckled.
+    Despill   = applied to original sRGB plate, converted back to linear.
+
+    Steps:
       resize-in-linear → linear_to_srgb → ImageNet-norm → inference
-      → Lanczos-upsample → despeckle → despill(sRGB) → srgb_to_linear → premultiply
+      → Lanczos-upsample alpha → despeckle
+      → despill original sRGB → srgb_to_linear → premultiply by model alpha
     """
     import cv2
     H, W = rgb_linear.shape[:2]
@@ -146,7 +160,7 @@ def infer_frame(
     mask_2k  = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
-    img_srgb = _linear_to_srgb(img_2k)
+    img_srgb = _linear_to_srgb(img_2k, clip_input=True)  # SDR for model
 
     # --- 3. ImageNet normalise ---
     img_norm = (img_srgb - _MEAN) / _STD
@@ -174,12 +188,15 @@ def infer_frame(
     if despeckle:
         pred_alpha = _clean_matte(pred_alpha, area_threshold=despeckle_size)
 
-    # --- 7. Despill FG (sRGB space, before linear conversion) ---
-    pred_fg = _despill(pred_fg, strength=despill_strength)
+    # --- 7. Despill ORIGINAL plate (sRGB space) ---
+    #   Convert original linear → sRGB, despill, convert back to linear.
+    #   We never use the model's fg reconstruction for color — original plate only.
+    orig_srgb     = _linear_to_srgb(rgb_linear)  # clip_input=False: preserve HDR for round-trip
+    orig_despilled = _despill(orig_srgb, strength=despill_strength)
+    orig_lin       = _srgb_to_linear(orig_despilled)
 
-    # --- 8. sRGB → linear, then premultiply ---
-    fg_lin    = _srgb_to_linear(pred_fg)
-    fg_premul = fg_lin * pred_alpha
+    # --- 8. Premultiply original linear plate by model alpha ---
+    fg_premul = orig_lin * pred_alpha
 
     return np.concatenate([fg_premul, pred_alpha], axis=-1)  # [H, W, 4]
 

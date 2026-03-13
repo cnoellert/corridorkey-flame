@@ -50,17 +50,9 @@ except ImportError:
 def _load_weights(npz_path: Path, model: nn.Module) -> None:
     """Load converted .npz weights into the MLX model."""
     weights = dict(mx.load(str(npz_path)))
-    # Strip metadata keys
+    # Strip metadata keys — all payload keys load directly (FoldedBN fix)
     weights = {k: v for k, v in weights.items() if not k.startswith("__")}
-
-    # Replace folded BN: model has nn.BatchNorm with .weight/.bias,
-    # but converted file has .scale/.bias (already folded).
-    # We re-map .scale → .weight so nn.BatchNorm receives the folded scale.
-    remapped: dict[str, mx.array] = {}
-    for k, v in weights.items():
-        remapped[k.replace(".scale", ".weight")] = v
-
-    model.load_weights(list(remapped.items()))
+    model.load_weights(list(weights.items()))
     mx.eval(model.parameters())
 
 
@@ -261,7 +253,7 @@ def main() -> None:
     # ---- Build model and load weights ---------------------------------------
     from model import GreenFormer
     print("[inference] Building GreenFormer …")
-    model = GreenFormer(img_size=args.tile_size)
+    model = GreenFormer()
     _load_weights(npz_path, model)
     model.eval()
     print(f"[inference] Weights loaded from {npz_path.name}")

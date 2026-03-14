@@ -153,6 +153,7 @@ def infer_frame(
     model,
     rgb_linear: np.ndarray,          # [H, W, 3] linear, 0-1+
     mask_linear: np.ndarray | None,  # [H, W, 1] linear, 0-1  — or None
+    input_is_srgb: bool = False,
     despill_strength: float = 1.0,
     despeckle: bool = True,
     despeckle_size: int = 400,
@@ -201,7 +202,10 @@ def infer_frame(
         mask_2k = hint[:, :, None]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
-    img_srgb = _linear_to_srgb(img_2k, clip_input=True)  # SDR for model
+    if input_is_srgb:
+        img_srgb = np.clip(img_2k, 0.0, 1.0).astype(np.float32)
+    else:
+        img_srgb = _linear_to_srgb(img_2k, clip_input=True)  # SDR for model
 
     # --- 3. ImageNet normalise ---
     img_norm = (img_srgb - _MEAN) / _STD
@@ -318,6 +322,8 @@ def main():
     ap.add_argument('frame',                 type=Path)
     ap.add_argument('--garbage-matte',       type=Path,  default=None)
     ap.add_argument('--gm-dilation',         type=int,   default=15)
+    ap.add_argument('--input-is-srgb',      action='store_true',
+                    help='Input is already sRGB/REC709 — skip linear→sRGB conversion')
     ap.add_argument('--despill-strength',    type=float, default=1.0)
     ap.add_argument('--trimap-radius',     type=int,   default=40,
                     help='Erode+dilate radius in native px for trimap construction (0=disable, default 40)')
@@ -384,6 +390,7 @@ def main():
     t0     = time.time()
     result, trimap_full = infer_frame(
         gf, rgb_linear, mask,
+        input_is_srgb=args.input_is_srgb,
         despill_strength=args.despill_strength,
         despeckle=not args.no_despeckle,
         despeckle_size=args.despeckle_size,

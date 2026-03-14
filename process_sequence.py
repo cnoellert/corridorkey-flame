@@ -133,6 +133,7 @@ def _process_frame(
     frame_path: Path,
     matte_path: Optional[Path],
     out_dir: Path,
+    input_is_srgb: bool = False,
     despill_strength: float = 1.0,
     despeckle: bool = True,
     despeckle_size: int = 400,
@@ -163,6 +164,7 @@ def _process_frame(
     # Inference
     result, trimap_full = infer_frame(
         model, rgb_linear, mask,
+        input_is_srgb=input_is_srgb,
         despill_strength=despill_strength,
         despeckle=despeckle,
         despeckle_size=despeckle_size,
@@ -238,6 +240,8 @@ def main():
                     help='Last frame number to process (default: last detected)')
     ap.add_argument('--model',              type=Path,
                     default=Path('/Users/cnoellert/ComfyUI/models/corridorkey/CorridorKey_v1.0.pth'))
+    ap.add_argument('--input-is-srgb',      action='store_true',
+                    help='Input is already sRGB/REC709 — skip linear→sRGB conversion')
     ap.add_argument('--despill-strength',   type=float, default=1.0)
     ap.add_argument('--trimap-radius',  type=int,   default=40,
                     help='Erode+dilate radius in native px (0=disable, default 40)')
@@ -324,6 +328,7 @@ def main():
                 despeckle=not args.no_despeckle,
                 despeckle_size=args.despeckle_size,
                 gm_dilation=args.gm_dilation,
+                input_is_srgb=args.input_is_srgb,
                 trimap_radius=args.trimap_radius,
             )
             elapsed   = stats['elapsed']

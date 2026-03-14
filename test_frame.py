@@ -181,26 +181,13 @@ def infer_frame(
 
     trimap_full = None   # tight trimap returned to caller for hard-constraint enforcement
 
-    # --- 1. Resize to model native size, preserving aspect ratio via padding ---
-    # Fit the long edge to MODEL_SIZE, pad the short edge to reach a square.
-    # This avoids aspect-ratio distortion which blurs/stretches edge detail.
-    scale   = MODEL_SIZE / max(H, W)
-    fit_h   = round(H * scale)
-    fit_w   = round(W * scale)
-    pad_top  = (MODEL_SIZE - fit_h) // 2
-    pad_left = (MODEL_SIZE - fit_w) // 2
-
-    img_fit  = cv2.resize(rgb_linear,           (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
-    mask_fit = cv2.resize(mask_linear[:, :, 0], (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
-
-    # Pad RGB with ImageNet mean so padding normalises to exactly 0 (neutral to model).
-    # Padding with black (zeros) normalises to ~[-2.1,-2.0,-1.8] — corrupts refiner.
-    _imagenet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    img_2k   = np.broadcast_to(_imagenet_mean, (MODEL_SIZE, MODEL_SIZE, 3)).copy()
-    mask_2k  = np.full( (MODEL_SIZE, MODEL_SIZE),    0.5, dtype=np.float32)   # uncertain padding
-    img_2k [pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = img_fit
-    mask_2k[pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = np.clip(mask_fit, 0.0, 1.0)
-    mask_2k = mask_2k[:, :, None]
+    # --- 1. Resize to model native size — straight stretch to square ---
+    # The model was trained with stretched-square inputs (no padding).
+    # Padding introduces out-of-distribution edge regions that corrupt the refiner.
+    # Stretch distortion is minor at 2048x1080 -> 2048x2048 (~11% vertical squeeze).
+    img_2k  = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
+    mask_2k = cv2.resize(mask_linear[:, :, 0], (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
+    mask_2k = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
     if input_is_srgb:
@@ -227,16 +214,11 @@ def infer_frame(
     # accumulation across frames which causes steadily increasing frame times.
     mx.clear_cache()
 
-    # --- 5. Crop padding, then Lanczos upsample back to native resolution ---
-    # Crop to the fitted region first (removes the pad we added in step 1).
-    pred_alpha = pred_alpha[pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]
-    pred_fg    = pred_fg   [pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]
-    if (H, W) != (fit_h, fit_w):
-        pred_alpha = cv2.resize(pred_alpha[:, :, 0], (W, H), interpolation=cv2.INTER_LANCZOS4)[:, :, None]
-        pred_fg    = cv2.resize(pred_fg,             (W, H), interpolation=cv2.INTER_LANCZOS4)
-    else:
-        pred_alpha = pred_alpha
-        pred_fg    = pred_fg
+    # --- 5. Bilinear upsample back to native resolution ---
+    # Matches ComfyUI node: F.interpolate(..., mode="bilinear", align_corners=False).
+    # Lanczos4 introduces ringing on fine semi-transparent edge detail.
+    pred_alpha = cv2.resize(pred_alpha[:, :, 0], (W, H), interpolation=cv2.INTER_LINEAR)[:, :, None]
+    pred_fg    = cv2.resize(pred_fg,             (W, H), interpolation=cv2.INTER_LINEAR)
     pred_alpha = np.clip(pred_alpha, 0.0, 1.0).astype(np.float32)
     pred_fg    = np.clip(pred_fg,    0.0, 1.0).astype(np.float32)
 
@@ -244,38 +226,14 @@ def infer_frame(
     if despeckle:
         pred_alpha = _clean_matte(pred_alpha, area_threshold=despeckle_size)
 
-    # --- 7. Hybrid FG color: model unmixing at edges, original plate in opaque core ---
-    #   pred_fg went through encoder/decoder so is softer than the original plate.
-    #   In solid opaque areas the original plate is sharper and should be used.
-    #   In semi-transparent edge zones, pred_fg has unmixed green from the color.
-    #   Blend: opaque core (alpha>0.95) → original plate; edge zone → pred_fg.
-    if input_is_srgb:
-        orig_srgb = np.clip(rgb_linear, 0.0, 1.0).astype(np.float32)
-    else:
-        orig_srgb = _linear_to_srgb(rgb_linear)
+    # --- 7. Despill, output raw — no colorspace transforms ---
+    # Write exactly what the model gives us. No linearise, no premult assumptions.
+    fg_out_raw    = _despill(pred_fg, strength=despill_strength)  # sRGB, straight, 0-1
 
-    orig_despilled   = _despill(orig_srgb, strength=despill_strength)
-    fg_despilled     = _despill(pred_fg,   strength=despill_strength)
+    fg_straight   = np.concatenate([fg_out_raw, pred_alpha], axis=-1)          # [H, W, 4]
+    key_premult   = np.concatenate([fg_out_raw * pred_alpha, pred_alpha], axis=-1)
 
-    # Blend weight: 1.0 = use original plate, 0.0 = use model FG
-    # Smoothly transition over alpha 0.8-1.0 range
-    blend = np.clip((pred_alpha - 0.8) / 0.2, 0.0, 1.0)  # [H,W,1]
-    fg_srgb_hybrid = blend * orig_despilled + (1.0 - blend) * fg_despilled
-
-    fg_despilled_lin = _srgb_to_linear(fg_srgb_hybrid)  # always output linear
-
-    # --- 8. Premultiply linear FG by model alpha ---
-    fg_premul = fg_despilled_lin * pred_alpha
-
-    # fg_srgb: straight sRGB FG (no linearization — matches reference engine)
-    fg_straight_srgb = np.concatenate([fg_srgb_hybrid, pred_alpha], axis=-1)  # [H, W, 4]
-
-    # key_rgba: sRGB premult RGBA — FG * alpha in sRGB space.
-    # Linear premult looks dark in Flame without a scene-linear display transform.
-    # sRGB premult displays correctly in any viewer and is what Flame expects.
-    key_srgb_premul = np.concatenate([fg_srgb_hybrid * pred_alpha, pred_alpha], axis=-1)
-
-    return key_srgb_premul, fg_straight_srgb, trimap_full
+    return key_premult, fg_straight, trimap_full
 
 
 def _clean_matte(alpha: np.ndarray, area_threshold: int = 400,
@@ -349,7 +307,8 @@ def main():
     ap = argparse.ArgumentParser(description='CorridorKey MLX single-frame test')
     ap.add_argument('frame',                 type=Path)
     ap.add_argument('--garbage-matte',       type=Path,  default=None)
-    ap.add_argument('--gm-dilation',         type=int,   default=10)
+    ap.add_argument('--gm-dilation',         type=int,   default=-1,
+                    help='Post-inference GM dilation px. -1 = model input only, no multiply (default)')
     ap.add_argument('--input-is-srgb',      action='store_true',
                     help='Input is already sRGB/REC709 — skip linear→sRGB conversion')
     ap.add_argument('--despill-strength',    type=float, default=1.0)
@@ -436,11 +395,13 @@ def main():
     # No post-inference constraint enforcement — original engine applies none.
 
     # Apply garbage matte post-inference
-    if args.garbage_matte:
+    if args.garbage_matte and args.gm_dilation >= 0:
         print(f"[test] Applying garbage matte (dilation={args.gm_dilation}px) …")
         gm = _read_exr_mask(args.garbage_matte.expanduser().resolve(), H, W)
         result      = _apply_garbage_matte(result,      gm, dilation_px=args.gm_dilation)
         fg_straight = _apply_garbage_matte(fg_straight, gm, dilation_px=args.gm_dilation)
+    elif args.garbage_matte:
+        print(f"[test] Garbage matte used as model input only (no post-inference multiply)")
         alpha2 = result[:, :, 3:4]
         print(f"[test] Alpha after GM: min={float(alpha2.min()):.4f}  "
               f"max={float(alpha2.max()):.4f}  mean={float(alpha2.mean()):.4f}")
@@ -448,7 +409,7 @@ def main():
     # Unpack premult result into constituent outputs
     alpha_out = result[:, :, 3:4]      # linear alpha, no gamma
     key_out   = result                 # linear premult RGBA — comp-ready
-    fg_out    = fg_straight            # sRGB straight RGBA (match reference engine)
+    fg_out    = fg_straight            # linear straight RGBA (scene-linear for EXR)
 
     print(f"[test] Writing to {out_dir} …")
     def _outpath(suffix):
@@ -457,15 +418,24 @@ def main():
             return out_dir / f"{stem}_{suffix}.{_frame_token}.exr"
         return out_dir / f"{stem}_{suffix}.exr"
 
-    _write_exr(_outpath('alpha'), alpha_out, compression=compression)
-    _write_exr(_outpath('fg'),    fg_out,    compression=compression)
-    _write_exr(_outpath('key'),   key_out,   compression=compression)
+    # Always write outputs with lossless ZIP compression.
+    _lossless = {'compression': None, 'dwaCompressionLevel': None}
+    _write_exr(_outpath('alpha'), alpha_out, compression=_lossless)
+    _write_exr(_outpath('fg'),    fg_out,    compression=_lossless)
+    _write_exr(_outpath('key'),   key_out,   compression=_lossless)
+
+    # Diagnostic: unpremult (FG / alpha) — treat fg_out as if it were premultiplied
+    # and divide out the alpha. Useful to compare against Comfy if their FG is premult.
+    _alpha3 = np.clip(alpha_out, 1e-6, 1.0)   # avoid div/0
+    fg_unpremult = np.concatenate([fg_out[:,:,:3] / _alpha3, alpha_out], axis=-1)
+    fg_unpremult = np.clip(fg_unpremult, 0.0, 1.0).astype(np.float32)
+    _write_exr(_outpath('fg_unpremult'), fg_unpremult, compression=_lossless)
     print(f"  {_outpath('alpha').name}  (single channel)")
     print(f"  {_outpath('fg').name}     (straight RGBA)")
     print(f"  {_outpath('key').name}    (premult RGBA — comp-ready)")
 
     if args.preview:
-        _write_preview(out_dir / f"{stem}_preview.png", result, input_is_srgb=True)   # key is sRGB premult
+        _write_preview(out_dir / f"{stem}_preview.png", result, input_is_srgb=False)  # key is linear premult
 
     print("[test] Complete.")
 

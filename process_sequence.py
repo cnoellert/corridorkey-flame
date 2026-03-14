@@ -171,7 +171,7 @@ def _process_frame(
     )
 
     # Apply garbage matte post-inference
-    if matte_path and matte_path.exists():
+    if matte_path and matte_path.exists() and gm_dilation >= 0:
         gm     = _read_exr_mask(matte_path, H, W)
         result      = _apply_garbage_matte(result,      gm, dilation_px=gm_dilation)
         fg_straight = _apply_garbage_matte(fg_straight, gm, dilation_px=gm_dilation)
@@ -234,7 +234,8 @@ def main():
                     help='Erode+dilate radius in native px (0=disable, default 40)')
     ap.add_argument('--despeckle',            action='store_true',  help='Enable alpha despeckle (default: off)')
     ap.add_argument('--despeckle-size',     type=int,   default=400)
-    ap.add_argument('--gm-dilation',        type=int,   default=15)
+    ap.add_argument('--gm-dilation',        type=int,   default=-1,
+                    help='Post-inference GM dilation px. -1 = model input only, no multiply (default)')
     ap.add_argument('--quantize',           choices=['int8'], default=None)
     ap.add_argument('--skip-existing',      action='store_true',
                     help='Skip frames whose _key.exr already exists in out-dir')

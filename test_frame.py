@@ -173,14 +173,16 @@ def infer_frame(
     import cv2
     H, W = rgb_linear.shape[:2]
 
+    trimap_full = None   # returned to caller to avoid recomputation
     if mask_linear is None:
         # No mask: treat everything as uncertain
         mask_linear = np.full((H, W, 1), 0.5, dtype=np.float32)
     elif trimap_radius > 0:
-        # Convert mask to proper trimap: erode→FG, dilate→BG, band→uncertain
-        # Do this at native resolution so edge geometry is preserved before
-        # the 2048px downsample.
+        # Convert mask to proper trimap once at native resolution.
+        # Stored in trimap_full so the caller can enforce hard constraints
+        # without recomputing the expensive morphological ops a second time.
         mask_linear = _make_trimap(mask_linear, erode_r=trimap_radius, dilate_r=trimap_radius)
+        trimap_full = mask_linear   # [H, W, 1] with values 0.0 / 0.5 / 1.0
 
     # --- 1. Resize to model native size in linear space ---
     img_2k   = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
@@ -253,7 +255,7 @@ def _clean_matte(alpha: np.ndarray, area_threshold: int = 400,
         b = blur_size * 2 + 1
         cleaned = cv2.GaussianBlur(cleaned, (b, b), 0)
     result = alpha * (cleaned.astype(np.float32) / 255.0)
-    return result[:, :, None] if squeeze else result
+    return result, trimap_full[:, :, None] if squeeze else result
 
 
 def _make_trimap(mask: np.ndarray, erode_r: int = 40, dilate_r: int = 40) -> np.ndarray:
@@ -369,7 +371,7 @@ def main():
     # Inference
     print(f"[test] Inferring …")
     t0     = time.time()
-    result = infer_frame(
+    result, trimap_full = infer_frame(
         gf, rgb_linear, mask,
         despill_strength=args.despill_strength,
         despeckle=not args.no_despeckle,
@@ -383,19 +385,13 @@ def main():
     print(f"[test] Alpha: min={float(alpha.min()):.4f}  max={float(alpha.max()):.4f}  "
           f"mean={float(alpha.mean()):.4f}")
 
-    # Enforce trimap hard constraints post-inference.
-    # The model receives the trimap as guidance only — not a hard constraint.
-    # Pixels deep in FG or BG zones can still flicker frame-to-frame as the
-    # model interprets image content differently each frame.
-    # Forcing FG→1.0 and BG→0.0 eliminates that flicker entirely.
-    if mask is not None and args.trimap_radius > 0:
-        import cv2 as _cv2
-        trimap = _make_trimap(mask, erode_r=args.trimap_radius, dilate_r=args.trimap_radius)
-        # Resize trimap to full output resolution (nearest — preserve hard zones)
-        tri_full = _cv2.resize(trimap[:, :, 0], (W, H), interpolation=_cv2.INTER_NEAREST)
+    # Enforce trimap hard constraints using the trimap computed inside infer_frame
+    # (no recomputation — morphological ops only happen once per frame).
+    if trimap_full is not None:
+        tri_ch   = trimap_full[:, :, 0]
         alpha_ch = result[:, :, 3]
-        alpha_ch = np.where(tri_full >= 1.0, 1.0,
-                   np.where(tri_full <= 0.0, 0.0, alpha_ch)).astype(np.float32)
+        alpha_ch = np.where(tri_ch >= 1.0, 1.0,
+                   np.where(tri_ch <= 0.0, 0.0, alpha_ch)).astype(np.float32)
         result   = np.concatenate([result[:, :, :3] * alpha_ch[:, :, None],
                                    alpha_ch[:, :, None]], axis=-1)
         print(f"[test] Trimap constraints enforced (r={args.trimap_radius}px)")

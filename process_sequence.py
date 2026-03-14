@@ -171,7 +171,8 @@ def _process_frame(
 
     # Enforce trimap hard constraints using trimap returned from infer_frame
     if trimap_full is not None:
-        tri_ch   = trimap_full[:, :, 0]
+        import cv2 as _cv2
+        tri_ch = _cv2.resize(trimap_full[:, :, 0], (W, H), interpolation=_cv2.INTER_NEAREST)
         alpha_ch = result[:, :, 3]
         alpha_ch = np.where(tri_ch >= 1.0, 1.0,
                    np.where(tri_ch <= 0.0, 0.0, alpha_ch)).astype(np.float32)

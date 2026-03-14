@@ -173,21 +173,23 @@ def infer_frame(
     import cv2
     H, W = rgb_linear.shape[:2]
 
-    trimap_full = None   # returned to caller to avoid recomputation
-    if mask_linear is None:
-        # No mask: treat everything as uncertain
-        mask_linear = np.full((H, W, 1), 0.5, dtype=np.float32)
-    elif trimap_radius > 0:
-        # Convert mask to proper trimap once at native resolution.
-        # Stored in trimap_full so the caller can enforce hard constraints
-        # without recomputing the expensive morphological ops a second time.
-        mask_linear = _make_trimap(mask_linear, erode_r=trimap_radius, dilate_r=trimap_radius)
-        trimap_full = mask_linear   # [H, W, 1] with values 0.0 / 0.5 / 1.0
+    trimap_full = None   # returned to caller for hard-constraint enforcement
 
     # --- 1. Resize to model native size in linear space ---
-    img_2k   = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
-    mask_2k  = cv2.resize(mask_linear[:, :, 0], (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
-    mask_2k  = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
+    img_2k  = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
+    mask_2k = cv2.resize(mask_linear[:, :, 0], (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
+    mask_2k = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
+
+    if mask_linear is None:
+        # No mask: treat everything as uncertain
+        mask_2k = np.full((MODEL_SIZE, MODEL_SIZE, 1), 0.5, dtype=np.float32)
+    elif trimap_radius > 0:
+        # Build trimap at MODEL_SIZE resolution — ~8× cheaper than native 6K.
+        # Scale radius proportionally: 40px at 6K → ~14px at 2048.
+        scaled_r = max(1, round(trimap_radius * MODEL_SIZE / max(H, W)))
+        mask_2k  = _make_trimap(mask_2k, erode_r=scaled_r, dilate_r=scaled_r)
+        # trimap_full is the 2048px version; caller upsamples to native for enforcement.
+        trimap_full = mask_2k   # [2048, 2048, 1]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
     img_srgb = _linear_to_srgb(img_2k, clip_input=True)  # SDR for model
@@ -388,7 +390,8 @@ def main():
     # Enforce trimap hard constraints using the trimap computed inside infer_frame
     # (no recomputation — morphological ops only happen once per frame).
     if trimap_full is not None:
-        tri_ch   = trimap_full[:, :, 0]
+        # trimap_full is at MODEL_SIZE (2048); upsample to native res for enforcement
+        tri_ch = cv2.resize(trimap_full[:, :, 0], (W, H), interpolation=cv2.INTER_NEAREST)
         alpha_ch = result[:, :, 3]
         alpha_ch = np.where(tri_ch >= 1.0, 1.0,
                    np.where(tri_ch <= 0.0, 0.0, alpha_ch)).astype(np.float32)

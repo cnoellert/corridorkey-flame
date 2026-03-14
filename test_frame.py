@@ -228,20 +228,16 @@ def infer_frame(
     if despeckle:
         pred_alpha = _clean_matte(pred_alpha, area_threshold=despeckle_size)
 
-    # --- 7. Despill ORIGINAL plate (sRGB space) ---
-    #   If input is already sRGB, despill directly — no conversion needed.
-    #   If input is linear, convert to sRGB, despill, convert back.
-    if input_is_srgb:
-        orig_srgb      = np.clip(rgb_linear, 0.0, 1.0).astype(np.float32)
-        orig_despilled = _despill(orig_srgb, strength=despill_strength)
-        orig_out       = orig_despilled   # stays in sRGB — no linearization for premult
-    else:
-        orig_srgb      = _linear_to_srgb(rgb_linear)  # clip_input=False: preserve HDR
-        orig_despilled = _despill(orig_srgb, strength=despill_strength)
-        orig_out       = _srgb_to_linear(orig_despilled)  # back to linear for premult
+    # --- 7. Despill model FG output (sRGB) → convert to linear → premultiply ---
+    #   Use pred_fg (the model's unmixed straight FG reconstruction in sRGB),
+    #   not the original plate. The model has already unmixed green from every
+    #   pixel — using the original plate throws that work away.
+    #   This matches the reference engine exactly.
+    fg_despilled     = _despill(pred_fg, strength=despill_strength)   # pred_fg is sRGB
+    fg_despilled_lin = _srgb_to_linear(fg_despilled)                  # always output linear
 
-    # --- 8. Premultiply original plate by model alpha ---
-    fg_premul = orig_out * pred_alpha
+    # --- 8. Premultiply linear FG by model alpha ---
+    fg_premul = fg_despilled_lin * pred_alpha
 
     return np.concatenate([fg_premul, pred_alpha], axis=-1), trimap_full  # [H, W, 4]
 
@@ -317,7 +313,7 @@ def main():
     ap = argparse.ArgumentParser(description='CorridorKey MLX single-frame test')
     ap.add_argument('frame',                 type=Path)
     ap.add_argument('--garbage-matte',       type=Path,  default=None)
-    ap.add_argument('--gm-dilation',         type=int,   default=100)
+    ap.add_argument('--gm-dilation',         type=int,   default=10)
     ap.add_argument('--input-is-srgb',      action='store_true',
                     help='Input is already sRGB/REC709 — skip linear→sRGB conversion')
     ap.add_argument('--despill-strength',    type=float, default=1.0)
@@ -436,7 +432,7 @@ def main():
     print(f"  {_outpath('key').name}    (premult RGBA — comp-ready)")
 
     if args.preview:
-        _write_preview(out_dir / f"{stem}_preview.png", result, input_is_srgb=args.input_is_srgb)
+        _write_preview(out_dir / f"{stem}_preview.png", result, input_is_srgb=False)  # output always linear
 
     print("[test] Complete.")
 

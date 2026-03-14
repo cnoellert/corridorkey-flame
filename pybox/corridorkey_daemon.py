@@ -1,55 +1,59 @@
 """
 corridorkey_daemon.py  —  Inference server for the CorridorKey Flame PyBox
 
-Runs in the corridorkey-mlx conda env. Loads the GreenFormer model once,
-then serves frames on demand via FIFO IPC from corridorkey_pybox.py.
+File-based IPC (no FIFOs):
+  Polls for TRIGGER file written by handler, reads params from PARAMS_FILE,
+  runs inference, writes outputs, drops DONE sentinel.
 
-Not intended to be run directly — spawned by the PyBox handler on initialize().
-Log output goes to /tmp/corridorkey_daemon.log.
+Spawned once by corridorkey_pybox.py. Logs to /tmp/corridorkey_daemon.log.
 """
 
 import argparse
 import json
-import sys
 import os
+import sys
+import time
+import traceback
 from pathlib import Path
 
 import numpy as np
 
-# Ensure the repo root is importable regardless of cwd
+# Repo root on sys.path
 _HERE = Path(__file__).parent.parent.resolve()
 sys.path.insert(0, str(_HERE))
 
 import mlx.core as mx
 from model import GreenFormer
-from test_frame import (
-    infer_frame,
-    _read_exr_rgb,
-    _read_exr_mask,
-    _write_exr,
-)
+from test_frame import infer_frame, _read_exr_rgb, _read_exr_mask, _write_exr
 
-LOSSLESS = {"compression": None, "dwaCompressionLevel": None}
+LOSSLESS     = {"compression": None, "dwaCompressionLevel": None}
+POLL_INTERVAL = 0.1   # seconds between trigger polls
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--weights",   required=True)
-    ap.add_argument("--cmd-fifo",  required=True)
-    ap.add_argument("--done-fifo", required=True)
     ap.add_argument("--in-plate",  required=True)
     ap.add_argument("--in-matte",  required=True)
     ap.add_argument("--out-fg",    required=True)
     ap.add_argument("--out-alpha", required=True)
+    ap.add_argument("--params",    required=True)
+    ap.add_argument("--trigger",   required=True)
+    ap.add_argument("--ready",     required=True)
+    ap.add_argument("--done",      required=True)
+    ap.add_argument("--error",     required=True)
     args = ap.parse_args()
 
     weights_path = Path(args.weights).expanduser().resolve()
-    cmd_fifo  = args.cmd_fifo
-    done_fifo = args.done_fifo
-    in_plate  = Path(args.in_plate)
-    in_matte  = Path(args.in_matte)
-    out_fg    = Path(args.out_fg)
-    out_alpha = Path(args.out_alpha)
+    in_plate     = Path(args.in_plate)
+    in_matte     = Path(args.in_matte)
+    out_fg       = Path(args.out_fg)
+    out_alpha    = Path(args.out_alpha)
+    params_file  = args.params
+    trigger      = args.trigger
+    ready        = args.ready
+    done         = args.done
+    error        = args.error
 
     # ------------------------------------------------------------------
     # Load model once
@@ -61,18 +65,29 @@ def main():
     mx.eval(model.parameters())
     print("[daemon] Model ready", flush=True)
 
+    # Signal handler that we're ready
+    open(ready, "w").close()
+
     # ------------------------------------------------------------------
-    # Serve frames — opening cmd_fifo for read blocks until handler writes,
-    # which also serves as the "ready" signal the handler polls for via lsof.
+    # Serve frames — poll for trigger file
     # ------------------------------------------------------------------
     while True:
-        with open(cmd_fifo, "r") as f:
-            raw = f.read().strip()
-
-        if not raw:
+        if not os.path.exists(trigger):
+            time.sleep(POLL_INTERVAL)
             continue
 
-        params = json.loads(raw)
+        # Consume trigger immediately to avoid double-fire
+        try:
+            os.unlink(trigger)
+        except OSError:
+            pass
+
+        # Read params
+        try:
+            params = json.loads(open(params_file).read())
+        except Exception as e:
+            open(error, "w").write(f"Could not read params: {e}")
+            continue
 
         if params.get("quit"):
             print("[daemon] Quit signal — shutting down", flush=True)
@@ -81,12 +96,10 @@ def main():
         frame = params.get("frame", "?")
         print(f"[daemon] Frame {frame} — inferring …", flush=True)
 
-        done_ok = False
         try:
-            # Read inputs written by Flame to the socket paths
-            rgb_linear = _read_exr_rgb(in_plate)           # [H, W, 3] float32 linear
+            rgb_linear = _read_exr_rgb(in_plate)
             H, W       = rgb_linear.shape[:2]
-            mask       = _read_exr_mask(in_matte, H, W)    # [H, W, 1] float32
+            mask       = _read_exr_mask(in_matte, H, W)
 
             result, fg_straight, _ = infer_frame(
                 model,
@@ -97,26 +110,20 @@ def main():
                 despeckle        = params.get("despeckle",         False),
             )
 
-            # result is premult RGBA [H, W, 4] — extract alpha channel
             alpha = result[:, :, 3:4].astype(np.float32)
-            _write_exr(out_alpha, alpha,                       compression=LOSSLESS)
+            _write_exr(out_alpha, alpha,                           compression=LOSSLESS)
             _write_exr(out_fg,    fg_straight.astype(np.float32), compression=LOSSLESS)
 
             mx.clear_cache()
             print(f"[daemon] Frame {frame} done", flush=True)
-            done_ok = True
+
+            # Signal done
+            open(done, "w").close()
 
         except Exception as e:
-            print(f"[daemon] ERROR on frame {frame}: {e}", flush=True, file=sys.stderr)
-            import traceback; traceback.print_exc()
-
-        finally:
-            # Always signal done so handler doesn't block forever
-            try:
-                with open(done_fifo, "w") as f:
-                    f.write("ok\n" if done_ok else "err\n")
-            except Exception:
-                pass
+            msg = f"Frame {frame}: {e}\n{traceback.format_exc()}"
+            print(f"[daemon] ERROR {msg}", flush=True)
+            open(error, "w").write(msg)
 
 
 if __name__ == "__main__":

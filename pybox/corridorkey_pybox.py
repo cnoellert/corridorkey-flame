@@ -1,18 +1,19 @@
 """
 corridorkey_pybox.py  —  Flame PyBox handler for CorridorKey MLX inference
 
-Two-file architecture:
-  corridorkey_pybox.py   — this file, runs in Flame's embedded Python (thin IPC glue)
-  corridorkey_daemon.py  — inference server, runs in corridorkey-mlx conda env
+IPC: file-based polling (no FIFOs — avoids blocking open() killing the handler).
 
-The daemon is spawned once on initialize(), loads the model, and serves frames
-via FIFO. Per-frame cost is inference time only (~3s on M4 Max), no reload overhead.
+  Handler writes:  /tmp/corridorkey_params.json  (inference params)
+                   /tmp/corridorkey_trigger       (empty, signals daemon to run)
+  Daemon writes:   /tmp/corridorkey_ready         (empty, signals model loaded)
+                   /tmp/corridorkey_done          (empty, signals frame complete)
+                   /tmp/corridorkey_error         (error message if failed)
 
-Install:
-  Copy both files somewhere accessible from Flame (e.g. ~/flame/pybox/).
-  In Flame batch, add a PyBox node and point it at corridorkey_pybox.py.
+The daemon is spawned once on initialize(). Model loads in ~2s.
+Per-frame cost = inference time only (~3s on M4 Max).
 
-Tested on Flame 2026.2.1 / macOS / Apple Silicon.
+Install: copy pybox/ dir to e.g. ~/flame/pybox/corridorkey/
+         In Flame batch > Add node > PyBox > point at corridorkey_pybox.py
 """
 
 from __future__ import print_function
@@ -25,80 +26,105 @@ import time
 import pybox_v1 as pybox
 
 # ---------------------------------------------------------------------------
-# Paths — edit CONDA_ENV and DEFAULT_WEIGHTS if your setup differs
+# Paths
 # ---------------------------------------------------------------------------
 _HERE         = os.path.dirname(os.path.abspath(__file__))
 DAEMON_SCRIPT = os.path.join(_HERE, "corridorkey_daemon.py")
 CONDA_ENV     = "corridorkey-mlx"
 
-_PFX      = "/tmp/corridorkey_"
-IN_PLATE  = _PFX + "in_plate.exr"
-IN_MATTE  = _PFX + "in_matte.exr"
-OUT_FG    = _PFX + "out_fg.exr"
-OUT_ALPHA = _PFX + "out_alpha.exr"
-CMD_FIFO  = _PFX + "cmd"
-DONE_FIFO = _PFX + "done"
+_PFX        = "/tmp/corridorkey_"
+IN_PLATE    = _PFX + "in_plate.exr"
+IN_MATTE    = _PFX + "in_matte.exr"
+OUT_FG      = _PFX + "out_fg.exr"
+OUT_ALPHA   = _PFX + "out_alpha.exr"
+PARAMS_FILE = _PFX + "params.json"
+TRIGGER     = _PFX + "trigger"
+READY       = _PFX + "ready"
+DONE        = _PFX + "done"
+ERROR       = _PFX + "error"
 
 DEFAULT_WEIGHTS = os.path.expanduser(
     "~/ComfyUI/models/corridorkey/CorridorKey_v1.0.mlx.npz"
 )
-DAEMON_READY_TIMEOUT = 60   # seconds to wait for model load on first launch
+READY_TIMEOUT = 90    # seconds to wait for model load
+FRAME_TIMEOUT = 30    # seconds to wait per frame
+POLL_INTERVAL = 0.2   # polling interval in seconds
 
 
 # ---------------------------------------------------------------------------
 # Daemon helpers
 # ---------------------------------------------------------------------------
 
-def _make_fifos():
-    for f in (CMD_FIFO, DONE_FIFO):
-        if os.path.exists(f):
+def _cleanup_sentinels():
+    for f in (TRIGGER, READY, DONE, ERROR):
+        try:
             os.unlink(f)
-        os.mkfifo(f)
+        except OSError:
+            pass
 
 
 def _spawn_daemon(weights_path):
-    """Launch corridorkey_daemon.py in the corridorkey-mlx conda env."""
+    _cleanup_sentinels()
     cmd = (
-        f"source ~/.zprofile 2>/dev/null; "
-        f"source ~/miniconda3/etc/profile.d/conda.sh; "
+        "source ~/.zprofile 2>/dev/null; "
+        "source ~/miniconda3/etc/profile.d/conda.sh; "
         f"conda activate {CONDA_ENV}; "
         f"python3 {DAEMON_SCRIPT} "
-        f"--weights '{weights_path}' "
-        f"--cmd-fifo {CMD_FIFO} "
-        f"--done-fifo {DONE_FIFO} "
-        f"--in-plate {IN_PLATE} "
-        f"--in-matte {IN_MATTE} "
-        f"--out-fg {OUT_FG} "
-        f"--out-alpha {OUT_ALPHA} "
-        f"> /tmp/corridorkey_daemon.log 2>&1 &"
+        f"  --weights '{weights_path}' "
+        f"  --in-plate  {IN_PLATE}  "
+        f"  --in-matte  {IN_MATTE}  "
+        f"  --out-fg    {OUT_FG}    "
+        f"  --out-alpha {OUT_ALPHA} "
+        f"  --params    {PARAMS_FILE} "
+        f"  --trigger   {TRIGGER}   "
+        f"  --ready     {READY}     "
+        f"  --done      {DONE}      "
+        f"  --error     {ERROR}     "
+        f"  >> /tmp/corridorkey_daemon.log 2>&1 &"
     )
     os.system(f"zsh -c '{cmd}'")
 
 
-def _wait_for_daemon(timeout=DAEMON_READY_TIMEOUT):
-    """Block until daemon opens CMD_FIFO for reading (signals it's ready)."""
-    # The daemon opens CMD_FIFO for reading after model load.
-    # We detect readiness by checking that the FIFO has a reader via lsof.
+def _kill_daemon():
+    os.system(f"pkill -f '{DAEMON_SCRIPT}' 2>/dev/null; true")
+
+
+def _wait_for_ready(timeout=READY_TIMEOUT):
+    """Poll for READY sentinel — written by daemon after model load."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        result = os.popen(f"lsof {CMD_FIFO} 2>/dev/null").read()
-        if result.strip():
+        if os.path.exists(READY):
             return True
-        time.sleep(0.5)
+        time.sleep(POLL_INTERVAL)
     return False
 
 
-def _send_frame(params: dict):
-    """Write params to CMD_FIFO, block on DONE_FIFO until daemon signals done."""
-    with open(CMD_FIFO, "w") as f:
-        f.write(json.dumps(params) + "\n")
-    # Block until daemon signals completion
-    with open(DONE_FIFO, "r") as f:
-        f.read()
+def _send_frame(params):
+    """Write params, drop trigger, poll for done."""
+    # Clear any stale done/error from previous frame
+    for f in (DONE, ERROR):
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
 
+    with open(PARAMS_FILE, "w") as f:
+        json.dump(params, f)
 
-def _kill_daemon():
-    os.system(f"pkill -f '{DAEMON_SCRIPT}' 2>/dev/null || true")
+    # Drop trigger file — daemon polls for this
+    open(TRIGGER, "w").close()
+
+    # Poll for done (or error)
+    deadline = time.time() + FRAME_TIMEOUT
+    while time.time() < deadline:
+        if os.path.exists(ERROR):
+            msg = open(ERROR).read().strip()
+            raise RuntimeError(f"Daemon error: {msg}")
+        if os.path.exists(DONE):
+            return
+        time.sleep(POLL_INTERVAL)
+
+    raise TimeoutError(f"Daemon did not complete frame within {FRAME_TIMEOUT}s")
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +144,8 @@ class CorridorKeyBox(pybox.BaseClass):
         self.add_out_socket("Result",   OUT_FG)
         self.add_out_socket("OutMatte", OUT_ALPHA)
 
-        # Spawn the daemon using default weights — UI hasn't been built yet.
-        # execute() will restart if the user changes the Weights browser path.
-        _kill_daemon()   # clean up any stale instance
-        _make_fifos()
+        # Spawn daemon with default weights — UI doesn't exist yet here
+        _kill_daemon()
         _spawn_daemon(DEFAULT_WEIGHTS)
 
         self.set_state_id("setup_ui")
@@ -135,24 +159,25 @@ class CorridorKeyBox(pybox.BaseClass):
                 tooltip="Path to .mlx.npz weights file",
             ),
             pybox.create_float_numeric(
-                "Despill Strength", value=1.0, default=1.0, min=0.0, max=1.0, inc=0.05,
+                "Despill Strength", value=1.0, default=1.0,
+                min=0.0, max=1.0, inc=0.05,
                 row=1, col=0,
-                tooltip="Green spill removal intensity (0=off, 1=full)",
+                tooltip="Green spill removal (0=off, 1=full)",
             ),
             pybox.create_toggle_button(
                 "Input is sRGB", value=True, default=True,
                 row=2, col=0,
-                tooltip="Enable for REC709/sRGB footage. Disable for scene-linear EXR",
+                tooltip="On for REC709 footage; off for scene-linear EXR",
             ),
             pybox.create_toggle_button(
                 "Despeckle", value=False, default=False,
                 row=3, col=0,
-                tooltip="Remove isolated alpha specks. Off by default — degrades refiner edges",
+                tooltip="Remove isolated alpha specks (degrades hair edges — off by default)",
             ),
             pybox.create_toggle_button(
                 "Reprocess", value=False, default=False,
                 row=0, col=1,
-                tooltip="Force re-inference on current frame after changing params",
+                tooltip="Bump to re-run inference with current params on current frame",
             ),
         )
         self.set_ui_pages(pybox.create_page("CorridorKey", "Settings", "Actions"))
@@ -160,10 +185,10 @@ class CorridorKeyBox(pybox.BaseClass):
 
 
     def execute(self):
-        changes = self.get_ui_changes()
+        changes   = self.get_ui_changes()
         reprocess = self.get_global_element_value("Reprocess")
 
-        # If the weights path changed, restart the daemon with new weights
+        # Weights changed — restart daemon with new path
         for el in changes:
             if el.get("name") == "Weights":
                 try:
@@ -171,30 +196,30 @@ class CorridorKeyBox(pybox.BaseClass):
                 except Exception:
                     new_weights = DEFAULT_WEIGHTS
                 _kill_daemon()
-                _make_fifos()
                 _spawn_daemon(new_weights)
-                if not _wait_for_daemon():
-                    self.set_error_msg("CorridorKey daemon failed to start — check /tmp/corridorkey_daemon.log")
+                if not _wait_for_ready():
+                    self.set_error_msg(
+                        "CorridorKey: daemon failed to start. "
+                        "Check /tmp/corridorkey_daemon.log"
+                    )
                     return
                 break
 
-        # UI-only change, no new frame to render — skip inference unless Reprocess
+        # UI-only change — skip inference unless Reprocess toggled
         if changes and not reprocess:
             return
 
-        # Reset Reprocess toggle
         if reprocess:
             self.set_global_element_value("Reprocess", False)
 
-        # Wait for daemon to be ready (first frame after initialize)
-        if not os.path.exists(CMD_FIFO) or not os.path.exists(DONE_FIFO):
-            _make_fifos()
-            weights = self.get_global_element_value("Weights") or DEFAULT_WEIGHTS
-            _spawn_daemon(weights)
-
-        if not _wait_for_daemon():
-            self.set_error_msg("CorridorKey daemon not ready — check /tmp/corridorkey_daemon.log")
-            return
+        # Ensure daemon is alive and ready
+        if not os.path.exists(READY):
+            if not _wait_for_ready():
+                self.set_error_msg(
+                    "CorridorKey: model not loaded yet. "
+                    "Check /tmp/corridorkey_daemon.log"
+                )
+                return
 
         params = {
             "frame":            self.get_frame(),
@@ -206,26 +231,27 @@ class CorridorKeyBox(pybox.BaseClass):
         try:
             _send_frame(params)
         except Exception as e:
-            self.set_error_msg(f"CorridorKey IPC error: {e}")
+            self.set_error_msg(f"CorridorKey: {e}")
 
     def teardown(self):
+        # Signal daemon to quit then kill
         try:
-            # Send quit signal
-            with open(CMD_FIFO, "w") as f:
-                f.write(json.dumps({"quit": True}) + "\n")
+            with open(PARAMS_FILE, "w") as f:
+                json.dump({"quit": True}, f)
+            open(TRIGGER, "w").close()
             time.sleep(0.5)
         except Exception:
             pass
         _kill_daemon()
-        for f in (CMD_FIFO, DONE_FIFO):
-            try:
-                os.unlink(f)
-            except Exception:
-                pass
+        _cleanup_sentinels()
+        try:
+            os.unlink(PARAMS_FILE)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
-# Entry point (called by Flame)
+# Entry point
 # ---------------------------------------------------------------------------
 def _main(argv):
     p = CorridorKeyBox(argv[0], argv[1] if len(argv) > 1 else "")

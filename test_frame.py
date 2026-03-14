@@ -189,22 +189,8 @@ def infer_frame(
     if mask_linear is None:
         # No mask: treat everything as uncertain
         mask_2k = np.full((MODEL_SIZE, MODEL_SIZE, 1), 0.5, dtype=np.float32)
-    elif trimap_radius > 0:
-        scaled_r = max(1, round(trimap_radius * MODEL_SIZE / max(H, W)))
-
-        # Track A — tight trimap for post-inference hard constraints
-        trimap_full = _make_trimap(mask_2k, erode_r=scaled_r, dilate_r=scaled_r)
-
-        # Track B — degraded hint for model input, matching training distribution.
-        # IMPORTANT: do NOT binarize the Flame key before building the hint.
-        # A chroma key has soft/semi-transparent values in hair wisps — binarizing
-        # at 0.5 throws those away and the model has no idea the wisps exist.
-        # Instead: dilate the soft mask (max-pool equivalent), then blur slightly.
-        dil_r  = min(20, scaled_r * 2)
-        k_dil  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dil_r*2+1, dil_r*2+1))
-        hint   = cv2.dilate(mask_2k[:, :, 0], k_dil)          # soft dilate, no threshold
-        hint   = cv2.GaussianBlur(hint, (11, 11), 0)
-        mask_2k = hint[:, :, None]
+    # else: mask_2k already resized — pass directly, no modification.
+    # Original engine behaviour: raw mask → model, no dilation/blur/trimap.
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
     if input_is_srgb:
@@ -331,7 +317,7 @@ def main():
     ap = argparse.ArgumentParser(description='CorridorKey MLX single-frame test')
     ap.add_argument('frame',                 type=Path)
     ap.add_argument('--garbage-matte',       type=Path,  default=None)
-    ap.add_argument('--gm-dilation',         type=int,   default=15)
+    ap.add_argument('--gm-dilation',         type=int,   default=100)
     ap.add_argument('--input-is-srgb',      action='store_true',
                     help='Input is already sRGB/REC709 — skip linear→sRGB conversion')
     ap.add_argument('--despill-strength',    type=float, default=1.0)
@@ -415,16 +401,7 @@ def main():
 
     # Enforce trimap hard constraints using the trimap computed inside infer_frame
     # (no recomputation — morphological ops only happen once per frame).
-    if trimap_full is not None:
-        # Only enforce BG constraint — zero out definite green screen pixels.
-        # Do NOT force FG to 1.0: the model should freely add hair/edge detail
-        # beyond the hint boundary. That's the whole point of the neural keyer.
-        tri_ch   = cv2.resize(trimap_full[:, :, 0], (W, H), interpolation=cv2.INTER_NEAREST)
-        alpha_ch = result[:, :, 3]
-        alpha_ch = np.where(tri_ch <= 0.0, 0.0, alpha_ch).astype(np.float32)
-        result   = np.concatenate([result[:, :, :3] * alpha_ch[:, :, None],
-                                   alpha_ch[:, :, None]], axis=-1)
-        print(f"[test] BG constraint enforced (r={args.trimap_radius}px)")
+    # No post-inference constraint enforcement — original engine applies none.
 
     # Apply garbage matte post-inference
     if args.garbage_matte:

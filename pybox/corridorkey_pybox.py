@@ -28,8 +28,10 @@ import pybox_v1 as pybox
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-_HERE         = os.path.dirname(os.path.abspath(__file__))
-DAEMON_SCRIPT = os.path.join(_HERE, "corridorkey_daemon.py")
+# Flame copies the handler to /var/tmp/ before running it, so __file__
+# is useless for locating the daemon. Use the absolute install path instead.
+PYBOX_DIR     = os.path.expanduser("~/flame/pybox/corridorkey")
+DAEMON_SCRIPT = os.path.join(PYBOX_DIR, "corridorkey_daemon.py")
 CONDA_ENV     = "corridorkey-mlx"
 
 _PFX        = "/tmp/corridorkey_"

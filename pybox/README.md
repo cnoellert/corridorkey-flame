@@ -17,10 +17,15 @@ Runs CorridorKey MLX inference as a native batch compositing node in Autodesk Fl
 
 ## Install
 
-1. Copy the `pybox/` folder somewhere Flame can reach it, e.g.:
+1. Copy both files to the install directory **exactly** — the path is hardcoded:
    ```
-   ~/flame/pybox/corridorkey/
+   mkdir -p ~/flame/pybox/corridorkey
+   cp pybox/corridorkey_pybox.py  ~/flame/pybox/corridorkey/
+   cp pybox/corridorkey_daemon.py ~/flame/pybox/corridorkey/
    ```
+   > **Why hardcoded?** Flame copies the handler to `/var/tmp/` before running
+   > it, so `__file__` resolves to the wrong directory. The daemon path must
+   > be absolute.
 
 2. In Flame batch schematic:
    - Add node → PyBox

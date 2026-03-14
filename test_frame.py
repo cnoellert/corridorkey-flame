@@ -228,13 +228,25 @@ def infer_frame(
     if despeckle:
         pred_alpha = _clean_matte(pred_alpha, area_threshold=despeckle_size)
 
-    # --- 7. Despill model FG output (sRGB) → convert to linear → premultiply ---
-    #   Use pred_fg (the model's unmixed straight FG reconstruction in sRGB),
-    #   not the original plate. The model has already unmixed green from every
-    #   pixel — using the original plate throws that work away.
-    #   This matches the reference engine exactly.
-    fg_despilled     = _despill(pred_fg, strength=despill_strength)   # pred_fg is sRGB
-    fg_despilled_lin = _srgb_to_linear(fg_despilled)                  # always output linear
+    # --- 7. Hybrid FG color: model unmixing at edges, original plate in opaque core ---
+    #   pred_fg went through encoder/decoder so is softer than the original plate.
+    #   In solid opaque areas the original plate is sharper and should be used.
+    #   In semi-transparent edge zones, pred_fg has unmixed green from the color.
+    #   Blend: opaque core (alpha>0.95) → original plate; edge zone → pred_fg.
+    if input_is_srgb:
+        orig_srgb = np.clip(rgb_linear, 0.0, 1.0).astype(np.float32)
+    else:
+        orig_srgb = _linear_to_srgb(rgb_linear)
+
+    orig_despilled   = _despill(orig_srgb, strength=despill_strength)
+    fg_despilled     = _despill(pred_fg,   strength=despill_strength)
+
+    # Blend weight: 1.0 = use original plate, 0.0 = use model FG
+    # Smoothly transition over alpha 0.8-1.0 range
+    blend = np.clip((pred_alpha - 0.8) / 0.2, 0.0, 1.0)  # [H,W,1]
+    fg_srgb_hybrid = blend * orig_despilled + (1.0 - blend) * fg_despilled
+
+    fg_despilled_lin = _srgb_to_linear(fg_srgb_hybrid)  # always output linear
 
     # --- 8. Premultiply linear FG by model alpha ---
     fg_premul = fg_despilled_lin * pred_alpha

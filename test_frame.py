@@ -160,7 +160,7 @@ def infer_frame(
     mask_linear: np.ndarray | None,  # [H, W, 1] linear, 0-1  — or None
     input_is_srgb: bool = False,
     despill_strength: float = 1.0,
-    despeckle: bool = True,
+    despeckle: bool = False,
     despeckle_size: int = 400,
     trimap_radius: int = 40,         # erode+dilate radius in native pixels
 ) -> np.ndarray:
@@ -355,7 +355,7 @@ def main():
     ap.add_argument('--despill-strength',    type=float, default=1.0)
     ap.add_argument('--trimap-radius',     type=int,   default=40,
                     help='Erode+dilate radius in native px for trimap construction (0=disable, default 40)')
-    ap.add_argument('--no-despeckle',        action='store_true')
+    ap.add_argument('--despeckle',            action='store_true',  help='Enable alpha despeckle (default: off)')
     ap.add_argument('--despeckle-size',      type=int,   default=400)
     ap.add_argument('--model',               type=Path,
                     default=Path('/Users/cnoellert/ComfyUI/models/corridorkey/CorridorKey_v1.0.pth'))
@@ -420,7 +420,7 @@ def main():
         gf, rgb_linear, mask,
         input_is_srgb=args.input_is_srgb,
         despill_strength=args.despill_strength,
-        despeckle=not args.no_despeckle,
+        despeckle=args.despeckle,
         despeckle_size=args.despeckle_size,
         trimap_radius=args.trimap_radius,
     )

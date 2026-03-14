@@ -193,7 +193,10 @@ def infer_frame(
     img_fit  = cv2.resize(rgb_linear,           (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
     mask_fit = cv2.resize(mask_linear[:, :, 0], (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
 
-    img_2k   = np.zeros((MODEL_SIZE, MODEL_SIZE, 3), dtype=np.float32)
+    # Pad RGB with ImageNet mean so padding normalises to exactly 0 (neutral to model).
+    # Padding with black (zeros) normalises to ~[-2.1,-2.0,-1.8] — corrupts refiner.
+    _imagenet_mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    img_2k   = np.broadcast_to(_imagenet_mean, (MODEL_SIZE, MODEL_SIZE, 3)).copy()
     mask_2k  = np.full( (MODEL_SIZE, MODEL_SIZE),    0.5, dtype=np.float32)   # uncertain padding
     img_2k [pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = img_fit
     mask_2k[pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = np.clip(mask_fit, 0.0, 1.0)

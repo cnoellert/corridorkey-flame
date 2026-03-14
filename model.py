@@ -164,9 +164,9 @@ class RefinerBlock(nn.Module):
     def __init__(self, channels: int, dilation: int = 1) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=dilation, dilation=dilation)
-        self.gn1 = nn.GroupNorm(8, channels)
+        self.gn1 = nn.GroupNorm(8, channels, pytorch_compatible=True)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=dilation, dilation=dilation)
-        self.gn2 = nn.GroupNorm(8, channels)
+        self.gn2 = nn.GroupNorm(8, channels, pytorch_compatible=True)
 
     def __call__(self, x: mx.array) -> mx.array:
         residual = x
@@ -185,7 +185,7 @@ class CNNRefinerModule(nn.Module):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(in_channels, hidden_channels, kernel_size=3, padding=1),
-            nn.GroupNorm(8, hidden_channels),
+            nn.GroupNorm(8, hidden_channels, pytorch_compatible=True),
             nn.ReLU(),
         )
         self.res1 = RefinerBlock(hidden_channels, dilation=1)
@@ -542,9 +542,10 @@ class GreenFormer(nn.Module):
         rgb         = x[:, :, :, :3]
         coarse_pred = mx.concatenate([alpha_coarse, fg_coarse], axis=-1)  # [N,H,W,4]
 
-        # Refiner disabled: MLX port produces large negative FG deltas (bug TBD).
-        # Coarse backbone output is correct and usable without refiner.
-        delta_logits = mx.zeros_like(coarse_pred)
+        if self.use_refiner and self.refiner is not None:
+            delta_logits = self.refiner(rgb, coarse_pred)
+        else:
+            delta_logits = mx.zeros_like(coarse_pred)
 
         delta_alpha = delta_logits[:, :, :, 0:1]
         delta_fg    = delta_logits[:, :, :, 1:4]

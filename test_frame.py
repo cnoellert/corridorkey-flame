@@ -181,16 +181,23 @@ def infer_frame(
 
     trimap_full = None   # tight trimap returned to caller for hard-constraint enforcement
 
-    # --- 1. Resize to model native size in linear space ---
-    img_2k  = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
-    mask_2k = cv2.resize(mask_linear[:, :, 0], (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
-    mask_2k = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
+    # --- 1. Resize to model native size, preserving aspect ratio via padding ---
+    # Fit the long edge to MODEL_SIZE, pad the short edge to reach a square.
+    # This avoids aspect-ratio distortion which blurs/stretches edge detail.
+    scale   = MODEL_SIZE / max(H, W)
+    fit_h   = round(H * scale)
+    fit_w   = round(W * scale)
+    pad_top  = (MODEL_SIZE - fit_h) // 2
+    pad_left = (MODEL_SIZE - fit_w) // 2
 
-    if mask_linear is None:
-        # No mask: treat everything as uncertain
-        mask_2k = np.full((MODEL_SIZE, MODEL_SIZE, 1), 0.5, dtype=np.float32)
-    # else: mask_2k already resized — pass directly, no modification.
-    # Original engine behaviour: raw mask → model, no dilation/blur/trimap.
+    img_fit  = cv2.resize(rgb_linear,           (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
+    mask_fit = cv2.resize(mask_linear[:, :, 0], (fit_w, fit_h), interpolation=cv2.INTER_LINEAR)
+
+    img_2k   = np.zeros((MODEL_SIZE, MODEL_SIZE, 3), dtype=np.float32)
+    mask_2k  = np.full( (MODEL_SIZE, MODEL_SIZE),    0.5, dtype=np.float32)   # uncertain padding
+    img_2k [pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = img_fit
+    mask_2k[pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]  = np.clip(mask_fit, 0.0, 1.0)
+    mask_2k = mask_2k[:, :, None]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
     if input_is_srgb:
@@ -217,10 +224,16 @@ def infer_frame(
     # accumulation across frames which causes steadily increasing frame times.
     mx.clear_cache()
 
-    # --- 5. Lanczos upsample back to native resolution ---
-    if (H, W) != (MODEL_SIZE, MODEL_SIZE):
+    # --- 5. Crop padding, then Lanczos upsample back to native resolution ---
+    # Crop to the fitted region first (removes the pad we added in step 1).
+    pred_alpha = pred_alpha[pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]
+    pred_fg    = pred_fg   [pad_top:pad_top+fit_h, pad_left:pad_left+fit_w]
+    if (H, W) != (fit_h, fit_w):
         pred_alpha = cv2.resize(pred_alpha[:, :, 0], (W, H), interpolation=cv2.INTER_LANCZOS4)[:, :, None]
         pred_fg    = cv2.resize(pred_fg,             (W, H), interpolation=cv2.INTER_LANCZOS4)
+    else:
+        pred_alpha = pred_alpha
+        pred_fg    = pred_fg
     pred_alpha = np.clip(pred_alpha, 0.0, 1.0).astype(np.float32)
     pred_fg    = np.clip(pred_fg,    0.0, 1.0).astype(np.float32)
 

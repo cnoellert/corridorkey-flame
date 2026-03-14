@@ -205,6 +205,10 @@ def infer_frame(
     pred_alpha = np.array(out['alpha'][0])   # [2048, 2048, 1]  (0-1)
     pred_fg    = np.array(out['fg'][0])      # [2048, 2048, 3]  (sRGB 0-1)
 
+    # Flush Metal cache after numpy conversion — prevents graph/cache
+    # accumulation across frames which causes steadily increasing frame times.
+    mx.metal.clear_cache()
+
     # --- 5. Lanczos upsample back to native resolution ---
     if (H, W) != (MODEL_SIZE, MODEL_SIZE):
         pred_alpha = cv2.resize(pred_alpha[:, :, 0], (W, H), interpolation=cv2.INTER_LANCZOS4)[:, :, None]

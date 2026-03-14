@@ -118,11 +118,11 @@ class CorridorKeyBox(pybox.BaseClass):
         self.add_out_socket("Result",   OUT_FG)
         self.add_out_socket("OutMatte", OUT_ALPHA)
 
-        # Spawn the daemon (model loads in background)
+        # Spawn the daemon using default weights — UI hasn't been built yet.
+        # execute() will restart if the user changes the Weights browser path.
         _kill_daemon()   # clean up any stale instance
         _make_fifos()
-        weights = self.get_global_element_value("Weights") or DEFAULT_WEIGHTS
-        _spawn_daemon(weights)
+        _spawn_daemon(DEFAULT_WEIGHTS)
 
         self.set_state_id("setup_ui")
         self.setup_ui()
@@ -166,9 +166,13 @@ class CorridorKeyBox(pybox.BaseClass):
         # If the weights path changed, restart the daemon with new weights
         for el in changes:
             if el.get("name") == "Weights":
+                try:
+                    new_weights = self.get_global_element_value("Weights") or DEFAULT_WEIGHTS
+                except Exception:
+                    new_weights = DEFAULT_WEIGHTS
                 _kill_daemon()
                 _make_fifos()
-                _spawn_daemon(self.get_global_element_value("Weights"))
+                _spawn_daemon(new_weights)
                 if not _wait_for_daemon():
                     self.set_error_msg("CorridorKey daemon failed to start — check /tmp/corridorkey_daemon.log")
                     return

@@ -160,45 +160,58 @@ def main():
             mask_t = torch.from_numpy(mask[..., 0])
 
             # Move model to GPU just for this frame, back to CPU after.
-            # Frees ~12GB of VRAM between frames so Flame can use it.
+            # Frees VRAM between frames so Flame can use it.
             if device.type == "cuda":
-                engine.model = engine.model.to(device)
-                engine.device = device
-                engine._mean  = engine._mean.to(device)
-                engine._std   = engine._std.to(device)
+                engine.model        = engine.model.to(device)
+                engine._engine.model = engine.model
+                engine.device       = device
+                engine._mean        = engine._mean.to(device)
+                engine._std         = engine._std.to(device)
 
-            # add_srgb_gamma=True: input is linear, encode to sRGB before model
-            result = engine.process_frame_tensor(
-                img_t, mask_t,
-                input_is_linear  = add_srgb_gamma,
-                despill_strength = float(despill),
-                auto_despeckle   = despeckle_val > 0.0,
-                despeckle_size   = int(despeckle_val) if despeckle_val > 0.0 else 400,
-            )
+            result = None
+            try:
+                # add_srgb_gamma=True: input is linear, encode to sRGB before model
+                with torch.no_grad():
+                    result = engine.process_frame_tensor(
+                        img_t, mask_t,
+                        input_is_linear  = add_srgb_gamma,
+                        despill_strength = float(despill),
+                        auto_despeckle   = despeckle_val > 0.0,
+                        despeckle_size   = int(despeckle_val) if despeckle_val > 0.0 else 400,
+                    )
+            finally:
+                # Always move model back to CPU and aggressively clear VRAM,
+                # even if inference failed -- prevents accumulation over frames.
+                if device.type == "cuda":
+                    engine.model        = engine.model.to(cpu_device)
+                    engine._engine.model = engine.model
+                    engine.device       = cpu_device
+                    engine._mean        = engine._mean.to(cpu_device)
+                    engine._std         = engine._std.to(cpu_device)
+                    # Force full release: empty_cache alone doesn't flush
+                    # activations. Explicitly delete any lingering CUDA tensors
+                    # then synchronize before returning to Flame.
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+
+            if result is None:
+                raise RuntimeError("Inference returned no result")
 
             # fg is sRGB straight [H,W,3], alpha is linear [H,W,1]
             fg_np    = result["fg"].numpy().astype(np.float32)
             alpha_np = result["alpha"].numpy().astype(np.float32)
+            del result
 
             # Decode FG back to linear if we encoded on the way in
             if add_srgb_gamma:
-                import torch as _t
-                fg_t = _t.from_numpy(fg_np)
+                fg_t  = torch.from_numpy(fg_np)
                 fg_np = _srgb_to_linear(fg_t).numpy().astype(np.float32)
 
-            fg_rgba  = np.concatenate([fg_np, alpha_np], axis=-1)
+            fg_rgba   = np.concatenate([fg_np, alpha_np], axis=-1)
             alpha_rgb = np.concatenate([alpha_np, alpha_np, alpha_np], axis=-1)
 
             _write_exr(out_fg,    fg_rgba)
             _write_exr(out_alpha, alpha_rgb)
-
-            # Move model back to CPU -- return VRAM to Flame
-            if device.type == "cuda":
-                engine.model  = engine.model.to(cpu_device)
-                engine.device = cpu_device
-                engine._mean  = engine._mean.to(cpu_device)
-                engine._std   = engine._std.to(cpu_device)
-                torch.cuda.empty_cache()
 
             print(f"[daemon] Frame {frame} done", flush=True)
             open(done, "w").close()

@@ -93,6 +93,8 @@ fi
 
 # ── Weights ────────────────────────────────────────────────────────────────
 WEIGHTS_DEST="$INSTALL_ROOT/models/$WEIGHTS_FILE"
+WEIGHTS_URL="https://github.com/cnoellert/corridorkey-flame/releases/download/v1.0.0/$WEIGHTS_FILE"
+
 if [[ -f "$WEIGHTS_DEST" ]]; then
     info "Weights already present: $WEIGHTS_DEST"
 elif [[ -n "$WEIGHTS_SRC" ]]; then
@@ -103,8 +105,15 @@ elif [[ -n "$WEIGHTS_SRC" ]]; then
         error "Weights file not found: $WEIGHTS_SRC"
     fi
 else
-    warn "Weights not installed. Copy manually:"
-    warn "  cp /path/to/$WEIGHTS_FILE $WEIGHTS_DEST"
+    info "Downloading weights (~380MB)..."
+    if command -v curl &>/dev/null; then
+        curl -L --progress-bar -o "$WEIGHTS_DEST" "$WEIGHTS_URL" || error "Download failed: $WEIGHTS_URL"
+    elif command -v wget &>/dev/null; then
+        wget -q --show-progress -O "$WEIGHTS_DEST" "$WEIGHTS_URL" || error "Download failed: $WEIGHTS_URL"
+    else
+        error "Neither curl nor wget found. Install one or pass --weights /path/to/$WEIGHTS_FILE"
+    fi
+    info "Weights downloaded: $WEIGHTS_DEST"
 fi
 
 # ── Flame path ─────────────────────────────────────────────────────────────

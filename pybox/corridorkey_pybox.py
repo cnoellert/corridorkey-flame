@@ -144,6 +144,11 @@ class CorridorKeyBox(pybox.BaseClass):
         if not changes and not reprocess:
             return
 
+        # Skip if daemon is still busy with a previous frame (TRIGGER still pending
+        # or READY gone). Prevents flooding the daemon when scrubbing sliders.
+        if os.path.exists(TRIGGER) or not os.path.exists(READY):
+            return
+
         if reprocess:
             self.set_render_element_value("Reprocess", False)
 

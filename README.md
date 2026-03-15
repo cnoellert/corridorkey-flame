@@ -66,11 +66,13 @@ In Flame Batch, add a **PyBox** node and point it at:
 To start fresh on any machine:
 
 ```bash
-rm -rf /opt/corridorkey /opt/corridorkey-flame
+sudo rm -rf /opt/corridorkey /opt/corridorkey-flame
 git clone https://github.com/cnoellert/corridorkey-flame.git /opt/corridorkey-flame
 cd /opt/corridorkey-flame
 bash install.sh
 ```
+
+> The installer sets ownership to the current user so subsequent `git pull` and `make` commands don't need sudo.
 
 ---
 

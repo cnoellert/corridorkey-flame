@@ -105,21 +105,19 @@ def main():
 
     from CorridorKeyModule.inference_engine import CorridorKeyEngine
     import torch
+    # 1024px on CUDA: 4x less attention memory vs 2048px.
+    # A5000 Ada has 24GB but Flame uses ~20GB, leaving ~4-6GB free.
+    # Quality difference is minor for typical GS work.
+    img_size = 1024 if device.type == "cuda" else 2048
     engine = CorridorKeyEngine(
         checkpoint_path=args.weights,
         device=str(device),
-        img_size=2048,
+        img_size=img_size,
         use_refiner=True,
     )
     if device.type in ("cuda", "mps"):
         engine = OptimizedEngine(engine)
     if device.type == "cuda":
-        # Enable memory-efficient attention (Flash Attention) -- reduces
-        # O(N^2) attention memory to O(N). Critical at 2048px resolution.
-        import torch.backends.cuda as cuda_backends
-        cuda_backends.enable_flash_sdp(True)
-        cuda_backends.enable_mem_efficient_sdp(True)
-        cuda_backends.enable_math_sdp(False)
         engine.model = engine.model.half()
 
     print(f"[daemon] Model ready on {device}", flush=True)

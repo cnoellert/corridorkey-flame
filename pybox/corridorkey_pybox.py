@@ -110,11 +110,7 @@ class CorridorKeyBox(pybox.BaseClass):
                 channel_name="despeckle_area_chn",
                 tooltip="Remove alpha specks smaller than this area in pixels. 0=off.",
             ),
-            pybox.create_toggle_button(
-                "Reprocess", value=False, default=False,
-                row=3, col=0, page=1,
-                tooltip="Bump to re-run inference on current frame.",
-            ),
+
         )
         self.set_ui_pages(
             pybox.create_page("Model",    "Model"),
@@ -123,8 +119,7 @@ class CorridorKeyBox(pybox.BaseClass):
         self.set_state_id("execute")
 
     def execute(self):
-        changes   = self.get_ui_changes()
-        reprocess = self.get_render_element_value("Reprocess")
+        changes = self.get_ui_changes()
 
         weights_changed = any(el.get("name") in ("Weights", "Quantized") for el in changes)
         if weights_changed:
@@ -139,33 +134,22 @@ class CorridorKeyBox(pybox.BaseClass):
             _spawn_daemon(new_weights, quantized=quantized)
             return
 
-        # Run inference when:
-        #   1. No output exists yet (first run)
-        #   2. Frame has changed since last inference
-        #   3. Reprocess explicitly toggled
-        current_frame = self.get_frame()
+        # Run on first connect, frame change, or param change.
+        current_frame   = self.get_frame()
         last_frame_file = PARAMS_FILE + ".last_frame"
-        try:
-            last_frame = int(open(last_frame_file).read().strip())
-        except Exception:
-            last_frame = None
+        try:    last_frame = int(open(last_frame_file).read().strip())
+        except: last_frame = None
 
         frame_changed = (last_frame != current_frame)
         first_run     = not os.path.exists(OUT_FG)
 
-        if not first_run and not frame_changed and not reprocess:
+        if not first_run and not frame_changed and not changes:
             return
-
-        # Clear Reprocess so it acts as a momentary button
-        if reprocess:
-            self.set_render_element_value("Reprocess", False)
 
         # Skip if daemon is still busy
         if os.path.exists(TRIGGER):
-            self.set_warning_msg("CorridorKey: still processing, try again shortly.")
             return
 
-        # Record current frame
         open(last_frame_file, "w").write(str(current_frame))
 
         if not os.path.exists(READY):

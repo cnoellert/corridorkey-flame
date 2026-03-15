@@ -75,36 +75,41 @@ class CorridorKeyBox(pybox.BaseClass):
 
     def setup_ui(self):
         self.add_render_elements(
-            # Page 0 — Weights (file browser gets its own page, no competition)
+            # Page 0 — Model: weights file + quantized toggle
             pybox.create_file_browser(
                 "Weights", DEFAULT_WEIGHTS, "npz", os.path.expanduser("~"),
                 row=0, col=0, page=0, tooltip="Path to .mlx.npz weights file",
             ),
-            # Page 1 — all other controls
+            pybox.create_toggle_button(
+                "Quantized", value=False, default=False,
+                row=1, col=0, page=0,
+                tooltip="Use int8 quantized weights (faster, smaller, minimal quality loss).",
+            ),
+            # Page 1 — Settings: processing controls
+            pybox.create_toggle_button(
+                "Linearize", value=True, default=True,
+                row=0, col=0, page=1,
+                tooltip="Linearize sRGB input before processing. On for REC709 camera footage; off for scene-linear EXR.",
+            ),
             pybox.create_float_numeric(
                 "Despill", value=1.0, default=1.0, min=0.0, max=1.0, inc=0.05,
-                row=0, col=0, page=1, tooltip="Green spill suppression (0=off, 1=full)",
-            ),
-            pybox.create_toggle_button(
-                "Input is sRGB", value=True, default=True,
-                row=1, col=0, page=1, tooltip="On for REC709; off for scene-linear EXR",
+                row=1, col=0, page=1,
+                tooltip="Green spill suppression strength (0=off, 1=full).",
             ),
             pybox.create_float_numeric(
                 "Despeckle", value=0.0, default=0.0, min=0.0, max=2000.0, inc=50.0,
-                row=2, col=0, page=1, tooltip="Remove alpha specks smaller than this area (px). 0=off.",
-            ),
-            pybox.create_toggle_button(
-                "Quantized", value=False, default=False,
-                row=3, col=0, page=1, tooltip="Use int8 quantized weights (faster, smaller).",
+                row=2, col=0, page=1,
+                tooltip="Remove alpha specks smaller than this area in pixels. 0=off.",
             ),
             pybox.create_toggle_button(
                 "Reprocess", value=False, default=False,
-                row=4, col=0, page=1, tooltip="Bump to re-run inference on current frame",
+                row=3, col=0, page=1,
+                tooltip="Bump to re-run inference on current frame.",
             ),
         )
         self.set_ui_pages(
-            pybox.create_page("Weights",  "Model"),
-            pybox.create_page("Settings", "Controls"),
+            pybox.create_page("Model",    "Model"),
+            pybox.create_page("Settings", "Settings"),
         )
         self.set_state_id("execute")
 
@@ -149,10 +154,12 @@ class CorridorKeyBox(pybox.BaseClass):
                 return
             self.set_notice_msg("")
 
+        # "Linearize" = treat input as sRGB and convert to linear before inference
+        linearize = bool(self.get_render_element_value("Linearize"))
         params = {
             "frame":            self.get_frame(),
+            "input_is_srgb":    linearize,
             "despill_strength": float(self.get_render_element_value("Despill")),
-            "input_is_srgb":    bool(self.get_render_element_value("Input is sRGB")),
             "despeckle":        float(self.get_render_element_value("Despeckle")),
         }
         try:

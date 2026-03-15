@@ -129,13 +129,15 @@ def main():
             H, W       = rgb_linear.shape[:2]
             mask       = _read_exr_mask(in_matte, H, W)
 
+            despeckle_val = params.get("despeckle", 0.0)
             result, fg_straight, _ = infer_frame(
                 model,
                 rgb_linear,
                 mask,
                 input_is_srgb    = params.get("input_is_srgb",    True),
                 despill_strength = params.get("despill_strength",  1.0),
-                despeckle        = params.get("despeckle",         False),
+                despeckle        = despeckle_val > 0.0,
+                despeckle_size   = int(despeckle_val) if despeckle_val > 0.0 else 400,
             )
 
             alpha = np.ascontiguousarray(result[:, :, 3], dtype=np.float32)  # [H, W] contiguous

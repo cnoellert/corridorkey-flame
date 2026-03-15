@@ -169,10 +169,11 @@ class CorridorKeyBox(pybox.BaseClass):
                 row=2, col=0, page=0,
                 tooltip="On for REC709 footage; off for scene-linear EXR",
             ),
-            pybox.create_toggle_button(
-                "Despeckle", value=False, default=False,
+            pybox.create_float_numeric(
+                "Despeckle", value=0.0, default=0.0,
+                min=0.0, max=2000.0, inc=50.0,
                 row=3, col=0, page=0,
-                tooltip="Remove isolated alpha specks (off by default)",
+                tooltip="Remove isolated alpha specks smaller than this area (pixels). 0=off. Try 200-500 for typical cleanup.",
             ),
             pybox.create_toggle_button(
                 "Quantized", value=False, default=False,
@@ -186,8 +187,8 @@ class CorridorKeyBox(pybox.BaseClass):
             ),
         )
         self.set_ui_pages(
-            pybox.create_page("Settings", "CorridorKey"),
-            pybox.create_page("Actions", "Actions"),
+            pybox.create_page("Settings"),
+            pybox.create_page("Actions"),
         )
         self.set_state_id("execute")
 
@@ -262,7 +263,7 @@ class CorridorKeyBox(pybox.BaseClass):
             "frame":            self.get_frame(),
             "despill_strength": float(self.get_global_element_value("Despill")),
             "input_is_srgb":    bool(self.get_global_element_value("Input is sRGB")),
-            "despeckle":        bool(self.get_global_element_value("Despeckle")),
+            "despeckle":        float(self.get_global_element_value("Despeckle")),
         }
 
         try:

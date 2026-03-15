@@ -114,7 +114,7 @@ def main():
                 despeckle        = params.get("despeckle",         False),
             )
 
-            alpha = result[:, :, 3].astype(np.float32)   # [H, W]
+            alpha = np.ascontiguousarray(result[:, :, 3], dtype=np.float32)  # [H, W] contiguous
             fg    = fg_straight.astype(np.float32)         # [H, W, 4]
 
             # Write FG first (Flame reads Result0 socket)

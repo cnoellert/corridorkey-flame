@@ -181,7 +181,10 @@ class CorridorKeyBox(pybox.BaseClass):
                 tooltip="Bump to re-run inference on current frame",
             ),
         )
-        self.set_ui_pages(pybox.create_page("CorridorKey", "Settings", "Actions"))
+        self.set_ui_pages(
+            pybox.create_page("Settings", "Value"),
+            pybox.create_page("Actions", "Action"),
+        )
         self.set_state_id("execute")
 
 

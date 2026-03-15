@@ -17,7 +17,10 @@ TRIGGER       = _PFX + "trigger"
 READY         = _PFX + "ready"
 DONE          = _PFX + "done"
 ERROR         = _PFX + "error"
-DEFAULT_WEIGHTS = "/opt/corridorkey/models/CorridorKey_v1.0.mlx.npz"
+DEFAULT_WEIGHTS = (
+    "/opt/corridorkey/models/CorridorKey_v1.0.mlx.npz" if _IS_MACOS
+    else "/opt/corridorkey/models/CorridorKey_v1.0.pth"
+)
 FRAME_TIMEOUT = 30
 POLL_INTERVAL = 0.2
 

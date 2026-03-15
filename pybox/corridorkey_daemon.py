@@ -114,9 +114,21 @@ def main():
                 despeckle        = params.get("despeckle",         False),
             )
 
-            alpha = result[:, :, 3:4].astype(np.float32)
-            _write_exr(out_alpha, alpha,                           compression=LOSSLESS)
-            _write_exr(out_fg,    fg_straight.astype(np.float32), compression=LOSSLESS)
+            alpha = result[:, :, 3].astype(np.float32)   # [H, W]
+            fg    = fg_straight.astype(np.float32)         # [H, W, 4]
+
+            # Write FG first (Flame reads Result0 socket)
+            _write_exr(out_fg, fg, compression=LOSSLESS)
+
+            # Write alpha matte as single-channel EXR with channel name 'A'
+            # (_write_exr maps 1-channel to 'Y' which Flame ignores — write manually)
+            import OpenEXR as _exr, Imath as _imath
+            H_a, W_a = alpha.shape
+            _hdr = _exr.Header(W_a, H_a)
+            _hdr['channels'] = {'A': _imath.Channel(_imath.PixelType(_imath.PixelType.FLOAT))}
+            _f = _exr.OutputFile(str(out_alpha), _hdr)
+            _f.writePixels({'A': alpha.tobytes()})
+            _f.close()
 
             mx.clear_cache()
             print(f"[daemon] Frame {frame} done", flush=True)

@@ -162,6 +162,7 @@ class CorridorKeyBox(pybox.BaseClass):
                 "Despill", value=1.0, default=1.0,
                 min=0.0, max=1.0, inc=0.05,
                 row=1, col=0, page=0,
+                channel_name="despill_chn",
                 tooltip="Green spill suppression strength (0=off, 1=full)",
             ),
             pybox.create_toggle_button(

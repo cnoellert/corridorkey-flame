@@ -182,8 +182,8 @@ class CorridorKeyBox(pybox.BaseClass):
             ),
         )
         self.set_ui_pages(
-            pybox.create_page("Settings", "Value"),
-            pybox.create_page("Actions", "Action"),
+            pybox.create_page("Settings", ""),
+            pybox.create_page("Actions", ""),
         )
         self.set_state_id("execute")
 

@@ -75,31 +75,37 @@ class CorridorKeyBox(pybox.BaseClass):
 
     def setup_ui(self):
         self.add_render_elements(
+            # Page 0 — Weights (file browser gets its own page, no competition)
             pybox.create_file_browser(
                 "Weights", DEFAULT_WEIGHTS, "npz", os.path.expanduser("~"),
-                row=0, col=0, tooltip="Path to .mlx.npz weights file",
+                row=0, col=0, page=0, tooltip="Path to .mlx.npz weights file",
             ),
+            # Page 1 — all other controls
             pybox.create_float_numeric(
                 "Despill", value=1.0, default=1.0, min=0.0, max=1.0, inc=0.05,
+                row=0, col=0, page=1, tooltip="Green spill suppression (0=off, 1=full)",
             ),
             pybox.create_toggle_button(
                 "Input is sRGB", value=True, default=True,
-                row=2, col=0, tooltip="On for REC709; off for scene-linear EXR",
+                row=1, col=0, page=1, tooltip="On for REC709; off for scene-linear EXR",
             ),
             pybox.create_float_numeric(
                 "Despeckle", value=0.0, default=0.0, min=0.0, max=2000.0, inc=50.0,
-                row=3, col=0, tooltip="Remove alpha specks smaller than this area (px). 0=off.",
+                row=2, col=0, page=1, tooltip="Remove alpha specks smaller than this area (px). 0=off.",
             ),
             pybox.create_toggle_button(
                 "Quantized", value=False, default=False,
-                row=4, col=0, tooltip="Use int8 quantized weights (faster, smaller).",
+                row=3, col=0, page=1, tooltip="Use int8 quantized weights (faster, smaller).",
             ),
             pybox.create_toggle_button(
                 "Reprocess", value=False, default=False,
-                row=5, col=0, tooltip="Bump to re-run inference on current frame",
+                row=4, col=0, page=1, tooltip="Bump to re-run inference on current frame",
             ),
         )
-        self.set_ui_pages(pybox.create_page("CorridorKey", "Settings"))
+        self.set_ui_pages(
+            pybox.create_page("Weights",  "Model"),
+            pybox.create_page("Settings", "Controls"),
+        )
         self.set_state_id("execute")
 
     def execute(self):

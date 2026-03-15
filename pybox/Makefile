@@ -1,5 +1,4 @@
-# pybox/Makefile — install corridorkey PyBox files to Flame's pybox directory
-INSTALL_DIR = $(HOME)/flame/pybox/corridorkey
+INSTALL_DIR = /opt/corridorkey/pybox
 FILES       = corridorkey_pybox.py corridorkey_daemon.py
 
 .PHONY: install

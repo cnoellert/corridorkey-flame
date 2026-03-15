@@ -21,7 +21,7 @@ import numpy as np
 # Repo root on sys.path.
 # __file__ resolves correctly here (daemon is spawned directly, not copied by Flame).
 # But hardcode for safety in case install layout changes.
-_REPO_ROOT = Path(os.path.expanduser("~/Documents/GitHub/corridorkey-mlx"))
+_REPO_ROOT = Path("/Users/cnoellert/Documents/GitHub/corridorkey-mlx")
 sys.path.insert(0, str(_REPO_ROOT))
 
 import mlx.core as mx

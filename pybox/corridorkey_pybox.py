@@ -30,7 +30,7 @@ import pybox_v1 as pybox
 # ---------------------------------------------------------------------------
 # Flame copies the handler to /var/tmp/ before running it, so __file__
 # is useless for locating the daemon. Use the absolute install path instead.
-PYBOX_DIR     = os.path.expanduser("~/flame/pybox/corridorkey")
+PYBOX_DIR     = "/opt/corridorkey/pybox"
 DAEMON_SCRIPT = os.path.join(PYBOX_DIR, "corridorkey_daemon.py")
 CONDA_ENV     = "corridorkey-mlx"
 
@@ -45,9 +45,7 @@ READY       = _PFX + "ready"
 DONE        = _PFX + "done"
 ERROR       = _PFX + "error"
 
-DEFAULT_WEIGHTS = os.path.expanduser(
-    "~/ComfyUI/models/corridorkey/CorridorKey_v1.0.mlx.npz"
-)
+DEFAULT_WEIGHTS = "/opt/corridorkey/models/CorridorKey_v1.0.mlx.npz"
 READY_TIMEOUT = 90    # seconds to wait for model load
 FRAME_TIMEOUT = 30    # seconds to wait per frame
 POLL_INTERVAL = 0.2   # polling interval in seconds

@@ -1,73 +1,98 @@
-# corridorkey-mlx
+# corridorkey-flame
 
-Pure MLX inference port of [CorridorKey](https://github.com/nikopueringer/CorridorKey) — GreenFormer neural green screen keying, running natively on Apple Silicon with no PyTorch dependency at inference time.
+Flame PyBox integration for [CorridorKey](https://github.com/cnoellert/comfyui-corridorkey) — a neural green screen keyer based on GreenFormer/Hiera.
 
-## Architecture
+Runs on **macOS Apple Silicon** (MLX) and **Linux CUDA** (Rocky Linux / Ubuntu). Platform is detected automatically.
 
-```
-GreenFormer
-├── HieraEncoder       (Hiera Base Plus, 4-ch input, NHWC)
-├── DecoderHead ×2     (alpha + foreground, MLP-mixer style)
-└── CNNRefinerModule   (dilated residual, receptive field ~65px)
-```
+---
 
-## Setup
+## Requirements
+
+| Platform | Hardware | Software |
+|----------|----------|----------|
+| macOS | Apple Silicon (M1–M4) | Miniconda, Flame 2025+ |
+| Linux | NVIDIA GPU (RTX/A-series) | Miniconda, CUDA 12.x, Flame 2025+ |
+
+> **Linux note:** Do not run ComfyUI or other GPU-heavy processes alongside Flame. The daemon uses CPU offload (model lives in system RAM, moves to GPU per-frame) but Flame itself holds ~20GB of VRAM on a 24GB card.
+
+---
+
+## Installation
+
+### 1. Clone the repo
 
 ```bash
-pip install mlx numpy OpenEXR
-# PyTorch only needed for one-time weight conversion:
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+git clone https://github.com/cnoellert/corridorkey-flame.git
+cd corridorkey-flame
 ```
 
-## Usage
+### 2. Run the installer
 
 ```bash
-# First run auto-converts CorridorKey_v1.0.pth → .mlx.npz (one time, ~30s)
-python inference.py frames/*.exr --model /path/to/CorridorKey_v1.0.pth --out-dir ./keyed
-
-# Optional: int8 weights (~6 GB instead of ~23 GB, opens up 24 GB machines)
-python inference.py frames/*.exr --model /path/to/CorridorKey_v1.0.pth --quantize int8
-
-# If you already have a .mlx.npz:
-python inference.py frames/*.exr --model CorridorKey_v1.0.mlx.npz
-
-# Manual conversion
-python convert.py CorridorKey_v1.0.pth [--quantize int8]
-
-# Post-hoc int8 on existing float32 .npz
-python quantize.py CorridorKey_v1.0.mlx.npz
+bash install.sh
 ```
 
-## File layout
+Optionally provide weights path directly:
 
-```
-corridorkey-mlx/
-├── model.py       # GreenFormer in mlx.nn (no PyTorch)
-├── convert.py     # .pth → .mlx.npz (PyTorch required, run once)
-├── inference.py   # CLI batch processor + Option-C auto-convert
-├── quantize.py    # Post-hoc int8 quantisation pass
-└── requirements.txt
+```bash
+bash install.sh --weights /path/to/CorridorKey_v1.0.pth
 ```
 
-## Weight conversion details
+The installer will:
+- Detect platform (macOS → MLX env, Linux → CUDA env)
+- Create the conda environment (`corridorkey-mlx` or `corridorkey-cuda`)
+- Install Python dependencies (auto-detects CUDA version on Linux)
+- Create `/opt/corridorkey/{models,pybox,reference}/`
+- Copy pybox and reference inference code into place
+- Copy weights if provided
 
-| Transform | Reason |
-|---|---|
-| Conv2d `[O,I,kH,kW]` → `[O,kH,kW,I]` | MLX NHWC conv layout |
-| BatchNorm folded into affine scale/bias | Removes running-stats memory access at inference |
-| DropPath / classifier head dropped | Inference-only build |
-| SHA-256 embedded in .npz | Cache invalidation when .pth is updated |
+### 3. Copy weights (if not done above)
 
-## Performance notes (M4 Max, 128 GB)
+| Platform | File |
+|----------|------|
+| macOS | `CorridorKey_v1.0.mlx.npz` → `/opt/corridorkey/models/` |
+| Linux | `CorridorKey_v1.0.pth` → `/opt/corridorkey/models/` |
 
-- float32 path: ~23 GB weights, numerically stable (MPS float16 causes NaN in refiner)
-- int8 path: ~6 GB weights, ~2× throughput on conv layers via MLX dequantise kernels
-- Transformer backbone (linear/matmul) sees the largest MLX gains over MPS
-- CNN refiner conv ops are currently the bottleneck; improves with MLX conv kernel updates
+### 4. Add to Flame
 
-## Checkpoint
+In Flame Batch, add a **PyBox** node and point it at:
 
-Download `CorridorKey_v1.0.pth` from HuggingFace:
 ```
-huggingface-cli download nikopueringer/CorridorKey_v1.0 CorridorKey_v1.0.pth
+/opt/corridorkey/pybox/corridorkey_pybox.py
 ```
+
+---
+
+## Inputs / Outputs
+
+| Pin | Description |
+|-----|-------------|
+| `IN_PLATE` | RGB plate (EXR, scene-linear or sRGB) |
+| `IN_MATTE` | Rough matte / holdout mask (EXR) |
+| `OUT_FG` | Keyed foreground RGBA (EXR) |
+| `OUT_ALPHA` | Alpha channel RGB (EXR) |
+
+---
+
+## PyBox Parameters
+
+**Model page**
+- `Weights` — path to model weights file
+- `Quantized` — enable quantized inference (macOS only, reduces memory)
+
+**Settings page**
+- `Add sRGB Gamma` — enable if input is scene-linear (converts to sRGB before inference, back to linear after)
+- `Despill Strength` — green spill suppression (0–1)
+- `Despeckle` — minimum alpha island area to remove (0–2000 px²)
+
+---
+
+## Troubleshooting
+
+**`EnvironmentNameNotFound: corridorkey-mlx`** — Old pybox file installed. Run `git pull && make -C pybox install`.
+
+**`CUDA out of memory`** — ComfyUI or another GPU process is running alongside Flame. Kill it and retry.
+
+**Daemon not starting** — Check `/tmp/corridorkey_daemon.log` for the full error.
+
+**Frames not updating** — Check `/tmp/corridorkey_ready` exists (daemon loaded). If not, the model is still loading.

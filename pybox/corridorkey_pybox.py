@@ -80,7 +80,7 @@ class CorridorKeyBox(pybox.BaseClass):
                 row=0, col=0, tooltip="Path to .mlx.npz weights file",
             ),
             pybox.create_float_numeric(
-                "DSP_TEST", value=1.0, default=1.0, min=0.0, max=1.0, inc=0.05,
+                "Despill", value=1.0, default=1.0, min=0.0, max=1.0, inc=0.05,
                 row=1, col=0, channel_name=" ", tooltip="Green spill suppression (0=off, 1=full)",
             ),
             pybox.create_toggle_button(

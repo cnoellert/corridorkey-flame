@@ -105,14 +105,16 @@ def main():
 
     from CorridorKeyModule.inference_engine import CorridorKeyEngine
     import torch
-    # 1024px on CUDA: 4x less attention memory vs 2048px.
-    # A5000 Ada has 24GB but Flame uses ~20GB, leaving ~4-6GB free.
-    # Quality difference is minor for typical GS work.
-    img_size = 1024 if device.type == "cuda" else 2048
+    # Load model to CPU first -- move to CUDA only during inference.
+    # Flame holds ~20GB of the A5000's 24GB permanently. Keeping the model
+    # on CPU (system RAM) between frames avoids competing with Flame for VRAM.
+    # ComfyUI uses the same pattern via comfy.model_management.
+    import torch
+    cpu_device = torch.device("cpu")
     engine = CorridorKeyEngine(
         checkpoint_path=args.weights,
-        device=str(device),
-        img_size=img_size,
+        device=str(cpu_device),
+        img_size=2048,
         use_refiner=True,
     )
     if device.type in ("cuda", "mps"):
@@ -157,6 +159,14 @@ def main():
             img_t  = torch.from_numpy(rgb_linear)
             mask_t = torch.from_numpy(mask[..., 0])
 
+            # Move model to GPU just for this frame, back to CPU after.
+            # Frees ~12GB of VRAM between frames so Flame can use it.
+            if device.type == "cuda":
+                engine.model = engine.model.to(device)
+                engine.device = device
+                engine._mean  = engine._mean.to(device)
+                engine._std   = engine._std.to(device)
+
             # add_srgb_gamma=True: input is linear, encode to sRGB before model
             result = engine.process_frame_tensor(
                 img_t, mask_t,
@@ -181,6 +191,14 @@ def main():
 
             _write_exr(out_fg,    fg_rgba)
             _write_exr(out_alpha, alpha_rgb)
+
+            # Move model back to CPU -- return VRAM to Flame
+            if device.type == "cuda":
+                engine.model  = engine.model.to(cpu_device)
+                engine.device = cpu_device
+                engine._mean  = engine._mean.to(cpu_device)
+                engine._std   = engine._std.to(cpu_device)
+                torch.cuda.empty_cache()
 
             print(f"[daemon] Frame {frame} done", flush=True)
             open(done, "w").close()

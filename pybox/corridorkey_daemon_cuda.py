@@ -121,6 +121,12 @@ def main():
         engine = OptimizedEngine(engine)
     if device.type == "cuda":
         engine.model = engine.model.half()
+        # Prefer memory-efficient attention (O(N) memory vs O(N^2) for Hiera at 2048px).
+        # Keep math_sdp=True as fallback so we never hit "no available kernel".
+        import torch.backends.cuda as _cuda_backends
+        _cuda_backends.enable_flash_sdp(True)
+        _cuda_backends.enable_mem_efficient_sdp(True)
+        _cuda_backends.enable_math_sdp(True)
 
     print(f"[daemon] Model ready on {device}", flush=True)
     open(ready, "w").close()

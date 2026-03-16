@@ -110,6 +110,15 @@ def main():
         except OSError:
             pass
 
+        # Debounce: wait briefly for any subsequent triggers (frame scrubbing
+        # fires a trigger per frame). Consume all pending triggers and read
+        # the latest params -- only process the most recent frame.
+        time.sleep(0.15)
+        while os.path.exists(trigger):
+            try: os.unlink(trigger)
+            except OSError: pass
+            time.sleep(0.05)
+
         # Read params
         try:
             params = json.loads(open(params_file).read())

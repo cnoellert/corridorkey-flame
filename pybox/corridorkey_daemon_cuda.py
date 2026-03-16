@@ -147,6 +147,14 @@ def main():
 
         os.unlink(trigger)
 
+        # Debounce: wait briefly for any subsequent triggers (frame scrubbing
+        # fires a trigger per frame). Consume all pending triggers and read
+        # the latest params -- only process the most recent frame.
+        time.sleep(0.15)
+        while os.path.exists(trigger):
+            os.unlink(trigger)
+            time.sleep(0.05)
+
         try:
             params = json.loads(open(params_f).read())
         except Exception:

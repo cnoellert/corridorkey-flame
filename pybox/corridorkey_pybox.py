@@ -200,7 +200,15 @@ class CorridorKeyBox(pybox.BaseClass):
                 return
             self.set_notice_msg("")
 
-        # "Add sRGB Gamma": encode linear->sRGB before inference, decode FG back to linear after
+        # Delete stale EXRs immediately so Flame errors cleanly on this call
+        # rather than serving wrong-frame results. Flame WILL retry execute()
+        # on error -- next call will find fresh EXRs from the daemon.
+        for f in (OUT_FG, OUT_ALPHA):
+            try: os.unlink(f)
+            except OSError: pass
+
+        # Fire trigger async -- execute() returns immediately.
+        # Flame will error this call (no EXR), retry, and get correct results.
         add_srgb_gamma = bool(self.get_render_element_value("Add sRGB Gamma"))
         params = {
             "frame":            self.get_frame(),
@@ -208,10 +216,10 @@ class CorridorKeyBox(pybox.BaseClass):
             "despill_strength": float(self.get_render_element_value("Despill")),
             "despeckle":        float(self.get_render_element_value("Despeckle")),
         }
-        try:
-            _send_frame(params)
-        except Exception as e:
-            self.set_error_msg(f"CorridorKey: {e}")
+        with open(PARAMS_FILE, "w") as f:
+            json.dump(params, f)
+        if not os.path.exists(TRIGGER):
+            open(TRIGGER, "w").close()
 
     def teardown(self):
         try:

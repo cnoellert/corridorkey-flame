@@ -10,9 +10,13 @@ Weights:  /opt/corridorkey/models/CorridorKey_v1.0.pth
 Device:   CUDA if available, CPU fallback
 """
 
+# Must be set before any CUDA/torch import -- once CUDA is initialized
+# the allocator config is frozen and env var changes have no effect.
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import argparse
 import json
-import os
 import sys
 import time
 import traceback
@@ -100,10 +104,6 @@ def main():
     error     = args.error
 
     # Load model
-    # Reduce fragmentation -- large contiguous allocations (attention) fail
-    # when free memory is fragmented even if total free > required.
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
     device = get_device()
     print(f"[daemon] Loading CorridorKey on {device} from {args.weights} ...", flush=True)
 

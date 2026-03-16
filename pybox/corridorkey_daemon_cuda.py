@@ -170,10 +170,13 @@ def main():
             mask_t = torch.from_numpy(mask[..., 0])
 
             # Move model to GPU just for this frame, back to CPU after.
-            # Flush any residual VRAM from previous frame BEFORE moving model
-            # to GPU -- prevents accumulation across frames.
+            # Two-stage flush: sync+cache clear, then a brief sleep to let
+            # the CUDA allocator consolidate fragmented blocks before the
+            # 8GB Hiera attention allocation.
             if device.type == "cuda":
                 torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                time.sleep(0.3)
                 torch.cuda.empty_cache()
                 engine.model         = engine.model.to(device)
                 engine._engine.model = engine.model

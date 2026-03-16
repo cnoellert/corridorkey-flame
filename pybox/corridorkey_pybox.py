@@ -57,8 +57,11 @@ def _spawn_daemon(weights_path, quantized=False):
 
 def _kill_daemon():
     os.system(f"pkill -f '{DAEMON_SCRIPT}' 2>/dev/null; true")
+    time.sleep(0.5)  # wait for process to actually die before spawning replacement
+    _cleanup_sentinels()
 
 def _send_frame(params):
+    """Write trigger and BLOCK until daemon writes DONE or ERROR."""
     for f in (DONE, ERROR):
         try: os.unlink(f)
         except OSError: pass
@@ -73,6 +76,16 @@ def _send_frame(params):
             return
         time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Daemon timeout after {FRAME_TIMEOUT}s")
+
+def _queue_frame(params):
+    """Write trigger without blocking -- daemon will pick it up after debounce.
+    Used when stale result files exist and Flame can serve them while new
+    inference runs in the background."""
+    with open(PARAMS_FILE, "w") as f:
+        json.dump(params, f)
+    # Only write trigger if daemon isn't already processing one
+    if not os.path.exists(TRIGGER):
+        open(TRIGGER, "w").close()
 
 class CorridorKeyBox(pybox.BaseClass):
 
@@ -169,11 +182,7 @@ class CorridorKeyBox(pybox.BaseClass):
         if not first_run and not frame_changed and not params_changed:
             return
 
-        # Skip if daemon is still busy -- will retry next execute() call
-        if os.path.exists(TRIGGER):
-            return
-
-        # Record state AFTER we know daemon is free and we're about to send
+        # Record new state
         open(last_frame_file,  "w").write(str(current_frame))
         open(last_params_file, "w").write(cur_params)
 
@@ -204,7 +213,15 @@ class CorridorKeyBox(pybox.BaseClass):
             "despeckle":        float(self.get_render_element_value("Despeckle")),
         }
         try:
-            _send_frame(params)
+            results_exist = os.path.exists(OUT_FG) and os.path.exists(OUT_ALPHA)
+            if results_exist:
+                # Stale results exist -- fire and forget so Flame can serve them
+                # immediately without error. Daemon debounce ensures we process
+                # the frame the user actually stops on.
+                _queue_frame(params)
+            else:
+                # No results at all (first run or after restart) -- must block.
+                _send_frame(params)
         except Exception as e:
             self.set_error_msg(f"CorridorKey: {e}")
 

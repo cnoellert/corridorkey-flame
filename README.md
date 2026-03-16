@@ -26,6 +26,8 @@ Runs on **macOS Apple Silicon** (MLX) and **Linux CUDA** (Rocky Linux / Ubuntu).
 
 ### 1. Clone the repo
 
+Clone anywhere you like:
+
 ```bash
 git clone https://github.com/cnoellert/corridorkey-flame.git
 cd corridorkey-flame
@@ -66,13 +68,12 @@ In Flame Batch, add a **PyBox** node and point it at:
 To start fresh on any machine:
 
 ```bash
-sudo rm -rf /opt/corridorkey /opt/corridorkey-flame
-git clone https://github.com/cnoellert/corridorkey-flame.git /opt/corridorkey-flame
-cd /opt/corridorkey-flame
+sudo rm -rf /opt/corridorkey
+cd /path/to/corridorkey-flame   # wherever you cloned the repo
 bash install.sh
 ```
 
-> The installer sets ownership to the current user so subsequent `git pull` and `make` commands don't need sudo.
+> The installer sets ownership to the current user so subsequent `git pull` and `bash install.sh` don't need sudo.
 
 ---
 

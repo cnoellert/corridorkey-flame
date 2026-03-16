@@ -78,16 +78,6 @@ def _send_frame(params):
         time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Daemon timeout after {FRAME_TIMEOUT}s")
 
-def _queue_frame(params):
-    """Write trigger without blocking -- daemon will pick it up after debounce.
-    Used when stale result files exist and Flame can serve them while new
-    inference runs in the background."""
-    with open(PARAMS_FILE, "w") as f:
-        json.dump(params, f)
-    # Only write trigger if daemon isn't already processing one
-    if not os.path.exists(TRIGGER):
-        open(TRIGGER, "w").close()
-
 class CorridorKeyBox(pybox.BaseClass):
 
     def initialize(self):
@@ -219,14 +209,7 @@ class CorridorKeyBox(pybox.BaseClass):
             "despeckle":        float(self.get_render_element_value("Despeckle")),
         }
         try:
-            results_exist = os.path.exists(OUT_FG) and os.path.exists(OUT_ALPHA)
-            if results_exist:
-                # Stale results exist -- fire and forget so Flame can serve them
-                # while daemon processes the new frame in background.
-                _queue_frame(params)
-            else:
-                # No results yet (first run or after restart) -- must block.
-                _send_frame(params)
+            _send_frame(params)
         except Exception as e:
             self.set_error_msg(f"CorridorKey: {e}")
 

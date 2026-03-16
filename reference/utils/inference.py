@@ -100,6 +100,12 @@ class OptimizedEngine:
         if device.type in ("mps", "cuda"):
             inp = inp.to(memory_format=torch.channels_last)
 
+        # Cast input to float16 on CUDA so scaled_dot_product_attention
+        # selects flash/mem_efficient kernels (O(N) memory) instead of
+        # math kernel (O(N^2), needs 8GB at 2048px). Autocast alone is
+        # insufficient -- SDP kernel selection checks input dtype directly.
+        if device.type == "cuda":
+            inp = inp.to(dtype=torch.float16)
 
         # Forward pass — nullcontext on MPS (float32), autocast on CUDA
         handle = None

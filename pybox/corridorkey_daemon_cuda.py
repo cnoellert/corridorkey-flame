@@ -16,6 +16,7 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -186,7 +187,14 @@ def main():
 
             result = None
             try:
-                with torch.no_grad():
+                # Force mem_efficient SDP -- flash/math both need more memory.
+                # mem_efficient is O(N) vs O(N^2) for math, critical at 2048px.
+                sdp_ctx = torch.backends.cuda.sdp_kernel(
+                    enable_flash=False,
+                    enable_math=False,
+                    enable_mem_efficient=True,
+                ) if device.type == "cuda" else contextlib.nullcontext()
+                with sdp_ctx, torch.no_grad():
                     result = engine.process_frame_tensor(
                         img_t, mask_t,
                         input_is_linear  = add_srgb_gamma,

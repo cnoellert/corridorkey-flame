@@ -242,6 +242,8 @@ def main():
             os.rename(out_alpha + ".tmp", out_alpha)
 
             print(f"[daemon] Frame {frame} done", flush=True)
+            # Write done_frame so handler knows which frame OUT_FG belongs to
+            open(params_f + ".done_frame", "w").write(str(frame))
             open(done, "w").close()
 
         except Exception as e:

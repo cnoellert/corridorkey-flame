@@ -175,6 +175,8 @@ def main():
             mx.clear_cache()
             print(f"[daemon] Frame {frame} done", flush=True)
 
+            # Write done_frame so handler knows which frame OUT_FG belongs to
+            open(params_file + ".done_frame", "w").write(str(frame))
             # Signal done
             open(done, "w").close()
 

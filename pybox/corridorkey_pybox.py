@@ -25,7 +25,8 @@ FRAME_TIMEOUT = 30
 POLL_INTERVAL = 0.2
 
 def _cleanup_sentinels():
-    for f in (TRIGGER, READY, DONE, ERROR):
+    for f in (TRIGGER, READY, DONE, ERROR,
+               PARAMS_FILE + ".done_frame"):
         try: os.unlink(f)
         except OSError: pass
 
@@ -177,12 +178,17 @@ class CorridorKeyBox(pybox.BaseClass):
 
         frame_changed  = (last_frame != current_frame)
         params_changed = (last_params != cur_params)
-        first_run      = not os.path.exists(OUT_FG)
 
-        if not first_run and not frame_changed and not params_changed:
+        # Check if OUT_FG actually belongs to the current frame.
+        # Daemon writes .done_frame after each successful inference.
+        done_frame_file = PARAMS_FILE + ".done_frame"
+        try:    done_frame = int(open(done_frame_file).read().strip())
+        except: done_frame = None
+        results_valid = (done_frame == current_frame) and os.path.exists(OUT_FG)
+
+        if results_valid and not params_changed:
             return
 
-        # Record new state
         open(last_frame_file,  "w").write(str(current_frame))
         open(last_params_file, "w").write(cur_params)
 
@@ -216,11 +222,10 @@ class CorridorKeyBox(pybox.BaseClass):
             results_exist = os.path.exists(OUT_FG) and os.path.exists(OUT_ALPHA)
             if results_exist:
                 # Stale results exist -- fire and forget so Flame can serve them
-                # immediately without error. Daemon debounce ensures we process
-                # the frame the user actually stops on.
+                # while daemon processes the new frame in background.
                 _queue_frame(params)
             else:
-                # No results at all (first run or after restart) -- must block.
+                # No results yet (first run or after restart) -- must block.
                 _send_frame(params)
         except Exception as e:
             self.set_error_msg(f"CorridorKey: {e}")

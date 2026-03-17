@@ -146,11 +146,12 @@ class CorridorKeyBox(pybox.BaseClass):
                 row=0, col=0, page=0,
                 tooltip="Path to model weights (.mlx.npz on Mac, .pth on Linux).",
             ),
-            pybox.create_toggle_button(
+            # Quantized weights are MLX-only — hide this control on Linux/CUDA
+            *([ pybox.create_toggle_button(
                 "Quantized", value=False, default=False,
                 row=2, col=0, page=0,
-                tooltip="Use int8 quantized weights (faster, smaller). Mac only.",
-            ),
+                tooltip="Use int8 quantized weights (faster, smaller, minimal quality loss). Mac/MLX only.",
+            )] if _IS_MACOS else []),
             pybox.create_toggle_button(
                 "Add sRGB Gamma", value=False, default=False,
                 row=0, col=0, page=1,

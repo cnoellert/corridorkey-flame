@@ -46,6 +46,10 @@ def main():
     ap.add_argument("--error",     required=True)
     ap.add_argument("--quantized", action="store_true", default=False,
                     help="Dequantize int8 weights on load")
+    ap.add_argument("--img-size",  type=int, default=2048,
+                    help="Accepted for CLI parity with CUDA daemon — ignored on MLX. "
+                         "MLX GreenFormer handles arbitrary tile sizes natively via "
+                         "pos_embed bicubic interpolation.")
     args = ap.parse_args()
 
     weights_path = Path(args.weights).expanduser().resolve()

@@ -244,11 +244,24 @@ working state (commit 530e607). All attempts to add `channels_last` memory
 format changes or explicit `float16` input casts made results worse, not
 better. The original code handles this via PyTorch autocast. Leave it alone.
 
-### 8. `--quantized` must be declared in CUDA daemon argparse
+### 8. Every `_spawn_daemon()` argument must be declared in BOTH daemon argparse blocks
 
-Even if it does nothing on CUDA, it must be in `ap.add_argument(...)`.
-Undeclared args cause a silent `SystemExit` when the daemon spawns, which
-looks like a model load failure.
+`_spawn_daemon()` passes the same CLI flags to whichever daemon it launches.
+If a flag exists in one daemon but not the other, the undeclared arg causes a
+silent `SystemExit` on spawn — the daemon dies instantly with no log output,
+making it look like a model load failure.
+
+Current flags and their status:
+
+| Flag | CUDA daemon | MLX daemon |
+|---|---|---|
+| `--weights` | required | required |
+| `--quantized` | accepted (no-op) | functional (int8 dequant) |
+| `--img-size` | functional (2048/1024) | accepted (no-op — MLX handles tile sizes natively) |
+
+Rule: whenever you add a new spawn argument, declare it in **both** daemons.
+If the feature doesn't apply to one platform, still declare it with `default=`
+and a comment explaining why it's a no-op there.
 
 ### 9. `os.unlink(trigger)` must be wrapped in `try/except OSError` in both daemons
 

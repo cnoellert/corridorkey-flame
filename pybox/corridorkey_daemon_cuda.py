@@ -208,6 +208,19 @@ def main():
                         auto_despeckle   = despeckle_val > 0.0,
                         despeckle_size   = int(despeckle_val) if despeckle_val > 0.0 else 400,
                     )
+            except torch.cuda.OutOfMemoryError:
+                # Do NOT retry on OOM — model state is uncertain and retrying
+                # can cause a CUDA kernel panic / hard system crash.
+                # Surface a clear message to the user via the ERROR sentinel.
+                oom_msg = (
+                    f"CorridorKey: Out of GPU memory at {args.img_size}px. "
+                    "Options: (1) Switch Img Size to 1024 in the Model tab, "
+                    "or (2) flush GPU memory with: sudo fuser -k /dev/nvidia*"
+                )
+                print(f"[daemon] OOM Frame {frame}: {oom_msg}", flush=True)
+                open(error, "w").write(oom_msg)
+                # Leave model on CPU (finally block runs), skip DONE sentinel.
+                result = None
             finally:
                 # ALWAYS move model back to CPU -- even on error.
                 # Without this the model stays on GPU permanently.
@@ -221,7 +234,11 @@ def main():
                     torch.cuda.empty_cache()
 
             if result is None:
-                raise RuntimeError("Inference returned no result")
+                # OOM handler already wrote the ERROR sentinel — just skip this frame.
+                # Any other None result is an unexpected failure; raise normally.
+                if not os.path.exists(error):
+                    raise RuntimeError("Inference returned no result")
+                continue
 
             # fg is sRGB straight [H,W,3], alpha is linear [H,W,1]
             fg_np    = result["fg"].numpy().astype(np.float32)

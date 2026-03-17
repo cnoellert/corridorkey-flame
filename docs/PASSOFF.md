@@ -1,10 +1,10 @@
 # CorridorKey Flame PyBox — Session Passoff
-**Date:** 2026-03-16 (updated — frame scrubbing SOLVED)
+**Date:** 2026-03-17 (fully working on Mac MLX + Linux CUDA)
 **Repo:** `git@github.com:cnoellert/corridorkey-flame.git`
 
 ---
 
-## Status: Frame Scrubbing SOLVED
+## Status: WORKING — Mac and Linux ✅
 
 The scrubbing flood is fixed. The root cause and full architecture are
 documented in `docs/PYBOX_ARCHITECTURE.md`. Read that before touching any
@@ -44,7 +44,7 @@ HTTP request. It has never had a scrubbing problem.
 ### `pybox/corridorkey_pybox.py` — full rewrite
 
 The previous async trigger-fire approach was replaced with:
-1. `if not self.is_processing(): return` guard at top of execute() 
+1. `if not self.is_processing(): return` guard at top of execute()
 2. `_send_frame()` blocking call (already existed, now actually used)
 3. Removed: `done_frame` sentinel, `last_frame`/`last_params` file tracking,
    stale-EXR deletion logic, async trigger fire, `results_valid` check.
@@ -52,6 +52,20 @@ The previous async trigger-fire approach was replaced with:
 
 The module docstring in `corridorkey_pybox.py` explains the architecture.
 `docs/PYBOX_ARCHITECTURE.md` has the full story including the failed history.
+
+### `pybox/corridorkey_daemon_mlx.py` — trigger unlink fix
+
+The bare `os.unlink(trigger)` after the try/except block was a duplicate —
+it crashed the daemon with `FileNotFoundError` on every frame because the
+trigger had already been consumed. Removed the duplicate. The remaining
+unlink is now solely inside `try/except OSError`.
+
+### `pybox/corridorkey_daemon_cuda.py` — same trigger unlink fix
+
+Identical bug: bare `os.unlink(trigger)` not wrapped in try/except. The
+trigger can disappear between `os.path.exists()` and `os.unlink()` if
+the handler's `_cleanup_sentinels()` runs in that window. Wrapped in
+`try/except OSError`.
 
 ### `docs/PYBOX_ARCHITECTURE.md` — new file
 
@@ -78,6 +92,10 @@ Comprehensive architecture document covering:
 6. **Wait 0.5 s after `pkill` before spawning** — pkill is async
 7. **Do not modify `reference/utils/inference.py`** — restored to 530e607, leave it
 8. **`--quantized` must be in CUDA argparse** — undeclared args cause silent exit
+9. **`os.unlink(trigger)` must be in `try/except OSError`** in both daemons —
+   `_cleanup_sentinels()` in the handler can race and delete the trigger
+   between `os.path.exists()` and `os.unlink()`, causing a `FileNotFoundError`
+   that crashes the daemon and requires a full respawn
 
 ---
 

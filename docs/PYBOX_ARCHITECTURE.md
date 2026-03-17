@@ -250,6 +250,25 @@ Even if it does nothing on CUDA, it must be in `ap.add_argument(...)`.
 Undeclared args cause a silent `SystemExit` when the daemon spawns, which
 looks like a model load failure.
 
+### 9. `os.unlink(trigger)` must be wrapped in `try/except OSError` in both daemons
+
+```python
+# CORRECT
+try:
+    os.unlink(trigger)
+except OSError:
+    pass
+
+# WRONG — will crash daemon with FileNotFoundError
+os.unlink(trigger)
+```
+
+The handler's `_cleanup_sentinels()` (called from `_kill_daemon()` on weights
+change or teardown) can delete the trigger file in the window between the
+daemon's `os.path.exists(trigger)` check and the `os.unlink()` call. Without
+the try/except, this raises `FileNotFoundError`, crashes the daemon process,
+and forces a full model reload on the next frame (~10-15s on CUDA).
+
 ---
 
 ## Weights & Install Layout

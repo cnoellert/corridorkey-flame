@@ -151,6 +151,7 @@ def main():
                 despill_strength = params.get("despill_strength",  1.0),
                 despeckle        = despeckle_val > 0.0,
                 despeckle_size   = int(despeckle_val) if despeckle_val > 0.0 else 400,
+                img_size         = args.img_size,
             )
 
             alpha = np.ascontiguousarray(result[:, :, 3], dtype=np.float32)  # [H, W] contiguous

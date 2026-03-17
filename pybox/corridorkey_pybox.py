@@ -61,8 +61,8 @@ def _cleanup_sentinels():
 def _parse_img_size(popup_value):
     """
     Convert the Img Size popup index (int) to an integer pixel size.
-    Popup items: 0 = "2048 (Full Quality)", 1 = "1024 (Fast / Low VRAM)"
-    Returns 2048 as default for any unrecognised value (Mac, error, etc.)
+    Popup items: 0 = "2048 (Full Quality)", 1 = "1024 (Fast)"
+    Returns 2048 as default for any unrecognised value (error, etc.)
     """
     return {0: 2048, 1: 1024}.get(int(popup_value) if popup_value is not None else 0, 2048)
 
@@ -162,14 +162,16 @@ class CorridorKeyBox(pybox.BaseClass):
                 row=2, col=0, page=0,
                 tooltip="Use int8 quantized weights (faster, smaller, minimal quality loss). Mac/MLX only.",
             )] if _IS_MACOS else []),
-            # Img Size is CUDA-only — Mac has unified memory so 2048 is always fine
-            *([ pybox.create_popup(
+            # Img Size selector — available on both platforms
+            # CUDA: 1024 saves ~4x VRAM and is ~3x faster
+            # MLX:  1024 is ~3x faster (no VRAM concern on unified memory)
+            pybox.create_popup(
                 "Img Size",
-                items=["2048 (Full Quality)", "1024 (Fast / Low VRAM)"],
+                items=["2048 (Full Quality)", "1024 (Fast)"],
                 value=0,
                 row=2, col=0, page=0,
-                tooltip="Inference resolution. 1024 uses ~4x less VRAM and is ~3x faster, with some quality loss on fine detail.",
-            )] if not _IS_MACOS else []),
+                tooltip="Inference resolution. 1024 is ~3x faster with some quality loss on fine detail.",
+            ),
             pybox.create_toggle_button(
                 "Add sRGB Gamma", value=False, default=False,
                 row=0, col=0, page=1,

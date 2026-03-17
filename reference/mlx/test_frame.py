@@ -30,7 +30,7 @@ import mlx.core as mx
 # ImageNet stats (model trained with these)
 _MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
 _STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
-MODEL_SIZE = 2048  # model's native inference resolution
+MODEL_SIZE = 2048  # default inference resolution (override via img_size param)
 
 # ---------------------------------------------------------------------------
 # Color helpers
@@ -163,6 +163,7 @@ def infer_frame(
     despeckle: bool = False,
     despeckle_size: int = 400,
     trimap_radius: int = 40,         # erode+dilate radius in native pixels
+    img_size: int = MODEL_SIZE,      # inference resolution (default 2048; 1024 = ~3x faster)
 ) -> np.ndarray:
     """
     Full reference pipeline. Returns premult RGBA [H, W, 4] linear float32.
@@ -185,8 +186,8 @@ def infer_frame(
     # The model was trained with stretched-square inputs (no padding).
     # Padding introduces out-of-distribution edge regions that corrupt the refiner.
     # Stretch distortion is minor at 2048x1080 -> 2048x2048 (~11% vertical squeeze).
-    img_2k  = cv2.resize(rgb_linear,           (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
-    mask_2k = cv2.resize(mask_linear[:, :, 0], (MODEL_SIZE, MODEL_SIZE), interpolation=cv2.INTER_LINEAR)
+    img_2k  = cv2.resize(rgb_linear,           (img_size, img_size), interpolation=cv2.INTER_LINEAR)
+    mask_2k = cv2.resize(mask_linear[:, :, 0], (img_size, img_size), interpolation=cv2.INTER_LINEAR)
     mask_2k = np.clip(mask_2k, 0.0, 1.0)[:, :, None]
 
     # --- 2. linear → sRGB  (model trained on sRGB) ---
@@ -200,7 +201,7 @@ def infer_frame(
 
     # --- 4. Concatenate mask channel and run model ---
     inp = np.concatenate([img_norm, mask_2k], axis=-1).astype(np.float32)
-    x   = mx.array(inp[None])   # [1, 2048, 2048, 4]
+    x   = mx.array(inp[None])   # [1, img_size, img_size, 4]
 
     t0  = time.time()
     out = model(x)

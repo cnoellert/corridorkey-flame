@@ -11,14 +11,14 @@ Runs on **macOS Apple Silicon** (MLX) and **Linux CUDA** (Rocky Linux / Ubuntu).
 | Platform | Hardware | Software |
 |----------|----------|----------|
 | macOS | Apple Silicon (M1–M4) | **Miniconda**, Flame 2025+ |
-| Linux | NVIDIA GPU (RTX/A-series, 24GB+ recommended) | **Miniconda**, CUDA 12.x, Flame 2025+ |
+| Linux | NVIDIA GPU (RTX/A-series, 16GB+ VRAM) | **Miniconda**, CUDA 12.x, Flame 2025+ |
 
 **Miniconda is required** — the installer uses conda to manage Python environments.
 
 - macOS: `brew install miniconda` or https://docs.conda.io/en/latest/miniconda.html
 - Linux: `wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash Miniconda3-latest-Linux-x86_64.sh`
 
-> **Linux note:** Do not run ComfyUI or other GPU-heavy processes alongside Flame. The daemon uses CPU offload (model lives in system RAM, moves to GPU per-frame) but Flame itself holds ~20GB of VRAM on a 24GB card.
+> **Linux note:** Do not run ComfyUI or other GPU-heavy processes alongside Flame. The daemon uses CPU offload (model lives in system RAM, moves to GPU per-frame) but Flame itself holds significant VRAM. Use `Img Size: 1024` if you have less than 24GB.
 
 ---
 
@@ -34,6 +34,8 @@ cd corridorkey-flame
 ```
 
 ### 2. Run the installer
+
+The installer writes to `/opt/corridorkey/`, which is owned by root. It uses `sudo` internally for the initial directory creation, then immediately transfers ownership to your user account so subsequent runs and file copies don't need `sudo`. **You will be prompted for your password on first install.**
 
 ```bash
 bash install.sh
@@ -69,23 +71,26 @@ To start fresh on any machine:
 
 ```bash
 sudo rm -rf /opt/corridorkey
-git pull   # make sure you have the latest
+cd /path/to/corridorkey-flame   # wherever you cloned the repo
+git pull
 bash install.sh
 ```
 
-> The clone can live anywhere — `/opt/corridorkey` is the install target, not the repo location. The installer sets ownership to the current user so subsequent runs don't need sudo.
+> The clone can live anywhere — `/opt/corridorkey` is the install target, not the repo location. `sudo rm` is needed because even though your user owns the directory, some platforms require it to remove from `/opt`.
 
 ---
 
 ## Updating
 
 ```bash
-cd /opt/corridorkey-flame
+cd /path/to/corridorkey-flame   # wherever you cloned the repo
 git pull
 bash install.sh
 ```
 
-The installer skips steps that are already complete (existing conda env, existing weights).
+The installer skips steps that are already complete (existing conda env, existing weights) and overwrites all code files in place. No `sudo` needed after the initial install since your user owns `/opt/corridorkey`.
+
+> **Mac note:** Inference code lives in `/opt/corridorkey/mlx/`, not `/opt/corridorkey/pybox/`. The installer handles this correctly. If you ever need to copy a file manually, copy to `/opt/corridorkey/mlx/` on Mac and `/opt/corridorkey/reference/` on Linux.
 
 ---
 
@@ -105,6 +110,7 @@ The installer skips steps that are already complete (existing conda env, existin
 **Model page**
 - `Weights` — path to model weights file
 - `Quantized` — enable quantized inference (macOS only, reduces memory)
+- `Img Size` — inference resolution: `2048 (Full Quality)` or `1024 (Fast)`. 1024 is ~3x faster with minimal quality loss on clean commercial GS work. Changing this respawns the daemon (~10s reload).
 
 **Settings page**
 - `Add sRGB Gamma` — enable if input is scene-linear (converts to sRGB before inference, back to linear after)
@@ -119,7 +125,7 @@ The installer skips steps that are already complete (existing conda env, existin
 
 **`can't open file '/opt/corridorkey/pybox/corridorkey_daemon_cuda.py'`** — `/opt/corridorkey/` was not created. Run `bash install.sh` from the repo directory.
 
-**`CUDA out of memory`** — ComfyUI or another GPU-heavy process is running alongside Flame. Kill it and retry. Check with `ps aux | grep -i comfy`.
+**`CUDA out of memory`** — Switch `Img Size` to `1024` in the Model tab, or flush GPU memory with `sudo fuser -k /dev/nvidia*` and retry at 2048. Check for other GPU processes with `nvidia-smi`.
 
 **Daemon not starting** — Check `/tmp/corridorkey_daemon.log` for the full error.
 

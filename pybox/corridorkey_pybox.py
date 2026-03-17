@@ -61,13 +61,20 @@ def _cleanup_sentinels():
 def _parse_img_size(popup_value):
     """
     Convert the Img Size popup value to an integer pixel size.
-    Flame popups return the selected string label, not an index.
+    Flame popups may return either an integer index (0/1) or the string label.
+    Index: 0 = 2048 (Full Quality), 1 = 1024 (Fast)
     Falls back to 2048 for any unrecognised value.
     """
     if popup_value is None:
         return 2048
-    s = str(popup_value)
-    if "1024" in s:
+    # Integer index path
+    try:
+        idx = int(popup_value)
+        return {0: 2048, 1: 1024}.get(idx, 2048)
+    except (ValueError, TypeError):
+        pass
+    # String label path
+    if "1024" in str(popup_value):
         return 1024
     return 2048
 

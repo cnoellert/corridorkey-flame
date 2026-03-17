@@ -169,7 +169,7 @@ class CorridorKeyBox(pybox.BaseClass):
                 "Img Size",
                 items=["2048 (Full Quality)", "1024 (Fast)"],
                 value=0,
-                row=2, col=0, page=0,
+                row=3, col=0, page=0,
                 tooltip="Inference resolution. 1024 is ~3x faster with some quality loss on fine detail.",
             ),
             pybox.create_toggle_button(

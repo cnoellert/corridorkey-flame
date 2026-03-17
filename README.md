@@ -4,6 +4,8 @@ Flame PyBox integration for [CorridorKey](https://github.com/cnoellert/comfyui-c
 
 Runs on **macOS Apple Silicon** (MLX) and **Linux CUDA** (Rocky Linux / Ubuntu). Platform is detected automatically.
 
+▶️ **[Demo on YouTube](https://youtu.be/_P5dZQjD6hA)**
+
 ---
 
 ## Requirements

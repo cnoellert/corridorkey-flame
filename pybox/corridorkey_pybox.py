@@ -60,11 +60,16 @@ def _cleanup_sentinels():
 
 def _parse_img_size(popup_value):
     """
-    Convert the Img Size popup index (int) to an integer pixel size.
-    Popup items: 0 = "2048 (Full Quality)", 1 = "1024 (Fast)"
-    Returns 2048 as default for any unrecognised value (error, etc.)
+    Convert the Img Size popup value to an integer pixel size.
+    Flame popups return the selected string label, not an index.
+    Falls back to 2048 for any unrecognised value.
     """
-    return {0: 2048, 1: 1024}.get(int(popup_value) if popup_value is not None else 0, 2048)
+    if popup_value is None:
+        return 2048
+    s = str(popup_value)
+    if "1024" in s:
+        return 1024
+    return 2048
 
 
 def _daemon_running():
